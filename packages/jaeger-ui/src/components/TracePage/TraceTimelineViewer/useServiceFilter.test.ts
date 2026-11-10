@@ -66,6 +66,7 @@ import { decodeSvcFilter, encodeSvcFilter } from '../url/svcFilter';
 import { resolveInitialFilter, buildFilterSearch, useSpanFilter } from './useServiceFilter';
 import {
   EMPTY_SPAN_FILTER,
+  GENAI_VIEW_FILTER,
   hiddenServices,
   IClause,
   ISpanFilter,
@@ -107,14 +108,14 @@ describe('resolveInitialFilter', () => {
     localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
     const result = resolveInitialFilter('?svcFilter=stale.ff&uiFind=foo', ['svc-a', 'svc-b', 'svc-c'], roots);
     expect(hiddenServices(result.filter).size).toBe(0);
-    expect(result.cleanSearch).toBe('?uiFind=foo');
+    expect(result.cleanSearch).toBe('?f=&uiFind=foo');
   });
 
-  it('returns empty cleanSearch when stale svcFilter is the only param', () => {
+  it('writes an explicit empty filter when stale svcFilter is the only param', () => {
     vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(), stale: true });
     const result = resolveInitialFilter('?svcFilter=stale.ff', ['svc-a'], roots);
     expect(hiddenServices(result.filter).size).toBe(0);
-    expect(result.cleanSearch).toBe('');
+    expect(result.cleanSearch).toBe('?f=');
   });
 
   it('reads localStorage defaults when no svcFilter in URL', () => {
@@ -228,6 +229,89 @@ describe('resolveInitialFilter', () => {
     expect(hiddenServices(result.filter)).toEqual(new Set(['svc-b']));
   });
 
+  describe('view default', () => {
+    const svcDefault = { prunedServices: ['svc-b'] };
+
+    it('applies the view default while the URL carries none of f, tree and svcFilter', () => {
+      const { filter } = resolveInitialFilter(
+        '?uiFind=x',
+        ['svc-a', 'svc-b'],
+        roots,
+        false,
+        GENAI_VIEW_FILTER
+      );
+      expect(filter).toEqual(GENAI_VIEW_FILTER);
+    });
+
+    it('lets an explicitly empty f clear the view default', () => {
+      const { filter } = resolveInitialFilter('?f=', ['svc-a', 'svc-b'], roots, false, GENAI_VIEW_FILTER);
+      expect(filter).toEqual(EMPTY_SPAN_FILTER);
+    });
+
+    it('lets tree alone override the view default', () => {
+      const { filter } = resolveInitialFilter(
+        '?tree=lift',
+        ['svc-a', 'svc-b'],
+        roots,
+        false,
+        GENAI_VIEW_FILTER
+      );
+      expect(filter).toEqual({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' });
+    });
+
+    it('merges the saved service default with the view default', () => {
+      localStorage.setItem('svcFilter.defaults', JSON.stringify(svcDefault));
+      const saved = resolveInitialFilter('', ['svc-a', 'svc-b'], roots, false, GENAI_VIEW_FILTER);
+      expect(saved.filter).toEqual(
+        normalizeFilter(withHiddenServices(GENAI_VIEW_FILTER, new Set(['svc-b'])))
+      );
+    });
+
+    it('keeps the URL speaking when a cleanup removes svcFilter, before or under a view default', () => {
+      vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(), stale: true });
+      const stale = resolveInitialFilter('?svcFilter=stale.ff', ['svc-a'], roots, false, GENAI_VIEW_FILTER);
+      expect(stale).toEqual({ filter: EMPTY_SPAN_FILTER, cleanSearch: '?f=' });
+      // The page opens in the plain view and selects the GenAI view after the cleanup.
+      expect(resolveInitialFilter('?svcFilter=stale.ff', ['svc-a'], roots).cleanSearch).toBe('?f=');
+      // A tree parameter already keeps the URL speaking, so the cleanup adds no f.
+      expect(resolveInitialFilter('?svcFilter=stale.ff&tree=lift', ['svc-a'], roots).cleanSearch).toBe(
+        '?tree=lift'
+      );
+      expect(
+        resolveInitialFilter('?svcFilter=stale.ff&uiFind=x', ['svc-a'], roots, false, GENAI_VIEW_FILTER)
+          .cleanSearch
+      ).toBe('?f=&uiFind=x');
+      // Hiding every root in remove mode is sanitized to no hidden service.
+      vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(['svc-b']), stale: false });
+      const sanitized = resolveInitialFilter(
+        '?svcFilter=abc.2',
+        ['svc-a', 'svc-b'],
+        new Set(['svc-a']),
+        false,
+        GENAI_VIEW_FILTER
+      );
+      expect(sanitized).toEqual({ filter: EMPTY_SPAN_FILTER, cleanSearch: '?f=' });
+      expect(
+        resolveInitialFilter('?f=', ['svc-a'], new Set(['svc-a']), true, GENAI_VIEW_FILTER).filter
+      ).toEqual(EMPTY_SPAN_FILTER);
+    });
+
+    it('renders a svcFilter link as before the view had a default', () => {
+      vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(['svc-a']), stale: false });
+      const url = resolveInitialFilter(
+        '?svcFilter=abc.1',
+        ['svc-a', 'svc-b'],
+        roots,
+        false,
+        GENAI_VIEW_FILTER
+      );
+      expect(url.filter).toEqual(withHiddenServices(EMPTY_SPAN_FILTER, new Set(['svc-b'])));
+      vi.mocked(decodeSvcFilter).mockReturnValue(null);
+      const bare = resolveInitialFilter('?svcFilter', ['svc-a', 'svc-b'], roots, false, GENAI_VIEW_FILTER);
+      expect(bare.filter).toEqual(EMPTY_SPAN_FILTER);
+    });
+  });
+
   describe('root service sanitization', () => {
     it('removes sole root service from pruned set and cleans URL when filter becomes empty', () => {
       vi.mocked(decodeSvcFilter).mockReturnValue({
@@ -238,7 +322,7 @@ describe('resolveInitialFilter', () => {
       const result = resolveInitialFilter('?svcFilter=abc.2', ['svc-a', 'svc-b'], new Set(['svc-a']));
       expect(hiddenServices(result.filter).has('svc-a')).toBe(false);
       expect(hiddenServices(result.filter).size).toBe(0);
-      expect(result.cleanSearch).toBe('');
+      expect(result.cleanSearch).toBe('?f=');
     });
 
     it('removes sole root service but keeps other pruned services and normalizes URL', () => {
@@ -277,7 +361,7 @@ describe('resolveInitialFilter', () => {
         new Set(['svc-a', 'svc-b'])
       );
       expect(hiddenServices(result.filter).size).toBe(0);
-      expect(result.cleanSearch).toBe('');
+      expect(result.cleanSearch).toBe('?f=');
     });
 
     it('keeps filter when at least one root service is visible (multi-root)', () => {
@@ -301,14 +385,15 @@ describe('buildFilterSearch', () => {
     vi.mocked(encodeSvcFilter).mockReturnValue(null);
   });
 
-  it('removes svcFilter when no services are pruned', () => {
+  it('replaces svcFilter with an explicit empty filter when no services are pruned', () => {
     const search = buildFilterSearch('?svcFilter=old.1&uiFind=foo', ['svc-a', 'svc-b'], EMPTY_SPAN_FILTER);
-    expect(search).toBe('?uiFind=foo');
+    expect(search).toBe('?f=&uiFind=foo');
   });
 
-  it('returns empty string when clearing the only param', () => {
+  it('keeps the URL speaking when clearing the only filter param', () => {
     const search = buildFilterSearch('?svcFilter=old.1', ['svc-a'], EMPTY_SPAN_FILTER);
-    expect(search).toBe('');
+    expect(search).toBe('?f=');
+    expect(buildFilterSearch('', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('');
   });
 
   it('sets svcFilter when services are pruned', () => {
@@ -340,7 +425,7 @@ describe('buildFilterSearch', () => {
     expect(buildFilterSearch('?uiFind=x', ['svc-a'], { ...EMPTY_SPAN_FILTER, treeMode: 'lift' })).toBe(
       '?tree=lift&uiFind=x'
     );
-    expect(buildFilterSearch('?tree=lift', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('');
+    expect(buildFilterSearch('?tree=lift', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('?f=');
   });
 
   it('writes a URL that resolves back to the same filter', () => {
@@ -383,10 +468,28 @@ describe('buildFilterSearch', () => {
     }
   });
 
+  it('writes an empty f under a view default so that the default does not come back', () => {
+    expect(buildFilterSearch('?uiFind=x', ['svc-a'], EMPTY_SPAN_FILTER, GENAI_VIEW_FILTER)).toBe(
+      '?f=&uiFind=x'
+    );
+    // A view without a default keeps the empty f it was given, so that a switch back to the view
+    // with the default does not bring the default back.
+    expect(buildFilterSearch('?f=', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('?f=');
+    expect(buildFilterSearch('?f=&tree=lift', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('?f=');
+    expect(buildFilterSearch('?tree=lift', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('?f=');
+    vi.mocked(encodeSvcFilter).mockReturnValueOnce(null);
+    expect(buildFilterSearch('?svcFilter=abc.1', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('?f=');
+    expect(buildFilterSearch('?uiFind=x', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('?uiFind=x');
+    const written = buildFilterSearch('', ['svc-a'], GENAI_VIEW_FILTER, GENAI_VIEW_FILTER);
+    expect(
+      resolveInitialFilter(written, ['svc-a'], new Set(['svc-a']), false, GENAI_VIEW_FILTER).filter
+    ).toEqual(GENAI_VIEW_FILTER);
+  });
+
   it('removes svcFilter when encodeSvcFilter returns null', () => {
     vi.mocked(encodeSvcFilter).mockReturnValue(null);
     const search = buildFilterSearch('?svcFilter=old.1', ['svc-a'], serviceFilter('svc-a'));
-    expect(search).toBe('');
+    expect(search).toBe('?f=');
   });
 });
 
@@ -478,7 +581,7 @@ describe('useSpanFilter hook', () => {
     vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(), stale: true });
     renderHook(() => useSpanFilter(makeTrace(['svc-a']), 'inline'));
     expect(mockNavigate).toHaveBeenCalledWith(
-      expect.objectContaining({ pathname: '/trace/abc', search: '' }),
+      expect.objectContaining({ pathname: '/trace/abc', search: '?f=' }),
       { replace: true }
     );
   });
@@ -546,8 +649,16 @@ describe('useSpanFilter hook', () => {
     mockSetSpanFilter.mockImplementation(() => undefined);
   });
 
-  function HookRenderer({ trace, mode }: { trace: IOtelTrace; mode: 'inline' | 'sidepanel' }) {
-    const { spanFilterNode } = useSpanFilter(trace, mode);
+  function HookRenderer({
+    trace,
+    mode,
+    viewDefault = null,
+  }: {
+    trace: IOtelTrace;
+    mode: 'inline' | 'sidepanel';
+    viewDefault?: ISpanFilter | null;
+  }) {
+    const { spanFilterNode } = useSpanFilter(trace, mode, viewDefault);
     return React.createElement('div', null, spanFilterNode);
   }
 
@@ -570,6 +681,367 @@ describe('useSpanFilter hook', () => {
     const storeSetState = (useTraceTimelineStore as unknown as { setState: ReturnType<typeof vi.fn> })
       .setState;
     expect(storeSetState).toHaveBeenCalledWith(expect.objectContaining({ detailStates: new Map() }));
+  });
+
+  it('clears the selected span in sidepanel mode when a view default hides it', () => {
+    const selectedSpanID = 'span-x';
+    const selectedSpan = {
+      spanID: selectedSpanID,
+      resource: { serviceName: 'svc-a' },
+      parentSpan: undefined,
+    } as unknown as IOtelSpan;
+    mockStoreState.detailStates = new Map([[selectedSpanID, {}]]) as typeof mockStoreState.detailStates;
+    const llm = {
+      spanID: 'llm',
+      resource: { serviceName: 'svc-a' },
+      parentSpan: selectedSpan,
+      genAIKind: 'LLM_CALL',
+    } as unknown as IOtelSpan;
+    const trace = makeTrace(['svc-a']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [selectedSpan, llm];
+    const storeSetState = (useTraceTimelineStore as unknown as { setState: ReturnType<typeof vi.fn> })
+      .setState;
+
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'sidepanel' }));
+    expect(storeSetState).not.toHaveBeenCalledWith(expect.objectContaining({ detailStates: new Map() }));
+
+    rerender(React.createElement(HookRenderer, { trace, mode: 'sidepanel', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(GENAI_VIEW_FILTER);
+    expect(storeSetState).toHaveBeenCalledWith(expect.objectContaining({ detailStates: new Map() }));
+  });
+
+  it('does not apply a saved default that would leave no span with the clauses the URL carries', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?f=h%3AspanType%3Anone&tree=lift',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined },
+      { spanID: 'llm', resource: { serviceName: 'svc-b' }, parentSpan: undefined, genAIKind: 'LLM_CALL' },
+    ] as unknown as IOtelSpan[];
+    render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(GENAI_VIEW_FILTER);
+  });
+
+  it('does not apply a saved default that would leave no span when the URL carries an empty svcFilter', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?svcFilter=&f=h%3AspanType%3Anone&tree=lift',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined },
+      { spanID: 'llm', resource: { serviceName: 'svc-b' }, parentSpan: undefined, genAIKind: 'LLM_CALL' },
+    ] as unknown as IOtelSpan[];
+    render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(GENAI_VIEW_FILTER);
+  });
+
+  it('does not apply a view default that would leave no span together with the saved default', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined },
+      { spanID: 'llm', resource: { serviceName: 'svc-b' }, parentSpan: undefined, genAIKind: 'LLM_CALL' },
+    ] as unknown as IOtelSpan[];
+    render(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(
+      withHiddenServices(EMPTY_SPAN_FILTER, new Set(['svc-b']))
+    );
+  });
+
+  it('re-reads the saved default under the view it settles on after a URL change that followed an edit', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-a', 'svc-b'] }));
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b', 'svc-c']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined },
+      { spanID: 'llm', resource: { serviceName: 'svc-c' }, parentSpan: undefined, genAIKind: 'LLM_CALL' },
+    ] as unknown as IOtelSpan[];
+    const { rerender } = render(
+      React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER })
+    );
+    expect(mockStoreState.spanFilter).toEqual(
+      normalizeFilter(withHiddenServices(GENAI_VIEW_FILTER, new Set(['svc-a', 'svc-b'])))
+    );
+    // The user shows both services; then the URL changes outside the filter, which re-reads the
+    // saved default under lift mode, where hiding the root is allowed.
+    capturedOnChange!(GENAI_VIEW_FILTER);
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?f=h%3AspanType%3Anone&tree=lift',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?uiFind=x',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(
+      normalizeFilter(withHiddenServices(GENAI_VIEW_FILTER, new Set(['svc-a', 'svc-b'])))
+    );
+    // The plain view protects the root, so only svc-b stays hidden.
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: null }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('keeps an edited selection when a re-run for the old URL lands before the navigation commits', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    // The user shows svc-b and hides the errors instead. React batches the navigation with a view
+    // switch, so the effect runs once more for the old URL before it runs for the one the hook wrote.
+    const errors: ISpanFilter = {
+      ...EMPTY_SPAN_FILTER,
+      clauses: [{ verb: 'hide', criterion: { property: 'status', shape: 'set', values: ['error'] } }],
+    };
+    capturedOnChange!(errors);
+    const navigated = mockNavigate.mock.calls.at(-1)![0] as { search: string };
+    expect(navigated.search).not.toBe('');
+    const writes = mockSetSpanFilter.mock.calls.length;
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    // The stale run leaves the applied filter alone instead of resolving the old URL again.
+    expect(mockSetSpanFilter.mock.calls.length).toBe(writes);
+    expect(mockStoreState.spanFilter).toEqual(errors);
+    vi.mocked(useLocation).mockReturnValue({
+      search: navigated.search,
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(errors);
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('forgets a pending navigation when a second edit returns the URL to its old value', () => {
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined },
+      { spanID: 'llm', resource: { serviceName: 'svc-a' }, parentSpan: undefined, genAIKind: 'LLM_CALL' },
+    ] as unknown as IOtelSpan[];
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    // The user adds a chip and removes it again before the first navigation commits, so the URL
+    // stays silent and no effect runs for either edit.
+    capturedOnChange!({
+      ...EMPTY_SPAN_FILTER,
+      clauses: [{ verb: 'hide', criterion: { property: 'status', shape: 'set', values: ['error'] } }],
+    });
+    capturedOnChange!(EMPTY_SPAN_FILTER);
+    expect((mockNavigate.mock.calls.at(-1)![0] as { search: string }).search).toBe('');
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(GENAI_VIEW_FILTER);
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('resolves again after another navigation restores the old URL under a new key', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    vi.mocked(useLocation).mockReturnValue({
+      search: '',
+      pathname: '/trace/abc',
+      key: 'first',
+    } as ReturnType<typeof useLocation>);
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    const errors: ISpanFilter = {
+      ...EMPTY_SPAN_FILTER,
+      clauses: [{ verb: 'hide', criterion: { property: 'status', shape: 'set', values: ['error'] } }],
+    };
+    capturedOnChange!(errors);
+    // Escape clears the search text and navigates to the same silent URL before the hook's own
+    // navigation commits, so the hook's write is lost and the location gets a new key.
+    vi.mocked(useLocation).mockReturnValue({
+      search: '',
+      pathname: '/trace/abc',
+      key: 'second',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(GENAI_VIEW_FILTER);
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('keeps the saved default when the URL clauses leave no span by themselves', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?f=k%3Astatus%3Aerror',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined, status: { code: 0 } },
+      { spanID: 'child', resource: { serviceName: 'svc-b' }, parentSpan: undefined, status: { code: 0 } },
+    ] as unknown as IOtelSpan[];
+    render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(hiddenServices(mockSetSpanFilter.mock.calls.at(-1)![0] as ISpanFilter)).toEqual(
+      new Set(['svc-b'])
+    );
+  });
+
+  it('re-reads the saved default when another navigation wins over the one the hook wrote', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    capturedOnChange!({
+      ...EMPTY_SPAN_FILTER,
+      clauses: [{ verb: 'hide', criterion: { property: 'status', shape: 'set', values: ['error'] } }],
+    });
+    // A navigation from elsewhere lands instead of the one the hook wrote.
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?uiFind=x',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    // The hook's navigation is no longer pending, so a view switch for the URL that won resolves.
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(
+      normalizeFilter(withHiddenServices(GENAI_VIEW_FILTER, new Set(['svc-b'])))
+    );
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('does not bring the saved default back on a view switch after a stale svcFilter was cleaned', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(), stale: true });
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?svcFilter=stale.ff',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    const navigated = mockNavigate.mock.calls.at(-1)![0] as { search: string };
+    expect(navigated.search).toBe('?f=');
+    vi.mocked(useLocation).mockReturnValue({
+      search: navigated.search,
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(EMPTY_SPAN_FILTER);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(EMPTY_SPAN_FILTER);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: null }));
+    expect(mockStoreState.spanFilter).toEqual(EMPTY_SPAN_FILTER);
+    mockSetSpanFilter.mockImplementation(() => undefined);
+    vi.mocked(decodeSvcFilter).mockReturnValue(null);
+  });
+
+  it('keeps the saved default across a view switch when the URL carries an empty svcFilter', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?svcFilter=',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(serviceFilter('svc-b'));
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('applies a saved default that hides the root once the page settles on the GenAI view', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-a'] }));
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    (trace as unknown as { spans: IOtelSpan[] }).spans = [
+      { spanID: 'root', resource: { serviceName: 'svc-a' }, parentSpan: undefined },
+      { spanID: 'llm', resource: { serviceName: 'svc-b' }, parentSpan: undefined, genAIKind: 'LLM_CALL' },
+    ] as unknown as IOtelSpan[];
+    // The page renders the plain view first, where root protection drops the saved default.
+    const { rerender } = render(React.createElement(HookRenderer, { trace, mode: 'inline' }));
+    expect(mockStoreState.spanFilter).toEqual(EMPTY_SPAN_FILTER);
+    // The auto-switch to the GenAI view resolves afresh, and lift mode may hide the root.
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(
+      normalizeFilter(withHiddenServices(GENAI_VIEW_FILTER, new Set(['svc-a'])))
+    );
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('keeps the service selection across a view switch instead of re-applying the saved default', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(
+      React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER })
+    );
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(
+      normalizeFilter(withHiddenServices(GENAI_VIEW_FILTER, new Set(['svc-b'])))
+    );
+
+    // The user shows svc-b again; the write carries the remaining clauses and no svcFilter.
+    capturedOnChange!(GENAI_VIEW_FILTER);
+    const navigated = mockNavigate.mock.calls.at(-1)![0] as { search: string };
+    expect(navigated.search).toBe('?f=h%3AspanType%3Anone&tree=lift');
+    vi.mocked(useLocation).mockReturnValue({
+      search: navigated.search,
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(GENAI_VIEW_FILTER);
+
+    // Switching to the plain view re-runs the resolve for the same URL and keeps svc-b shown.
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: null }));
+    expect(mockStoreState.spanFilter).toEqual(GENAI_VIEW_FILTER);
+    // And back, with the same result.
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockStoreState.spanFilter).toEqual(GENAI_VIEW_FILTER);
+    mockSetSpanFilter.mockImplementation(() => undefined);
+  });
+
+  it('does not re-resolve the filter when the detail panel mode changes', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    vi.mocked(useLocation).mockReturnValue({
+      search: '?f=&tree=lift',
+      pathname: '/trace/abc',
+    } as ReturnType<typeof useLocation>);
+    mockSetSpanFilter.mockImplementation((filter: ISpanFilter) => {
+      mockStoreState.spanFilter = filter;
+    });
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(
+      React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER })
+    );
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(
+      withHiddenServices({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' }, new Set(['svc-b']))
+    );
+    // The user shows svc-b again; the URL is unchanged because the saved default wrote nothing.
+    capturedOnChange!({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' });
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' });
+    const calls = mockSetSpanFilter.mock.calls.length;
+    rerender(React.createElement(HookRenderer, { trace, mode: 'sidepanel', viewDefault: GENAI_VIEW_FILTER }));
+    expect(mockSetSpanFilter).toHaveBeenCalledTimes(calls);
+    mockSetSpanFilter.mockImplementation(() => undefined);
   });
 
   it('does not rewrite the store when the URL resolves to the filter it already holds', () => {
@@ -645,6 +1117,24 @@ describe('useSpanFilter hook', () => {
       expect.objectContaining({ search: expect.stringContaining('f=k%3Astatus%3Aerror') }),
       expect.anything()
     );
+  });
+
+  it('re-resolves the filter when the view default changes', () => {
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    const { rerender } = render(
+      React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER })
+    );
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(GENAI_VIEW_FILTER);
+    mockStoreState.spanFilter = GENAI_VIEW_FILTER;
+    rerender(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: null }));
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(EMPTY_SPAN_FILTER);
+  });
+
+  it('writes an empty f when the popover clears the view default', () => {
+    const trace = makeTrace(['svc-a', 'svc-b']);
+    render(React.createElement(HookRenderer, { trace, mode: 'inline', viewDefault: GENAI_VIEW_FILTER }));
+    capturedOnChange!({ ...GENAI_VIEW_FILTER, clauses: [] });
+    expect((mockNavigate.mock.calls.at(-1)![0] as { search: string }).search).toBe('?f=&tree=lift');
   });
 
   it('does not clear detailStates in inline mode when service is pruned via onApply', () => {

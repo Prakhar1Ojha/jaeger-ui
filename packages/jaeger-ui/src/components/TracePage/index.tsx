@@ -43,7 +43,13 @@ import {
   viewTypeIsNavigable,
   viewTypeShowsMinimap,
 } from './types';
-import { evaluateSpanFilter, KEEP_NEEDS_LIFT, LEAVES_NO_SPAN, withoutHiddenSpans } from './spanFilter';
+import {
+  evaluateSpanFilter,
+  GENAI_VIEW_FILTER,
+  KEEP_NEEDS_LIFT,
+  LEAVES_NO_SPAN,
+  withoutHiddenSpans,
+} from './spanFilter';
 import { getUrl } from './url';
 import ErrorMessage from '../common/ErrorMessage';
 import LoadingIndicator from '../common/LoadingIndicator';
@@ -164,7 +170,16 @@ export function TracePageImpl(props: TProps) {
   const timelineBarsVisible = useLayoutPrefsStore(s => s.timelineBarsVisible);
   const zustandSetTimelineBarsVisible = useLayoutPrefsStore(s => s.setTimelineBarsVisible);
   const zustandFocusUiFindMatches = useTraceTimelineStore(s => s.focusUiFindMatches);
-  const { spanFilter, applyFilter, spanFilterNode } = useSpanFilter(traceData, detailPanelMode);
+  const [viewType, setViewType] = useState<ETraceViewType>(ETraceViewType.TraceTimelineViewer);
+  // Read the trace's own verdict rather than re-deriving it here. It is computed
+  // once from each span's cached genAIKind, so re-scanning attributes is both
+  // redundant and free to drift away from classifySpan as the detector evolves.
+  const traceIsGenAI = traceData?.isGenAITrace ?? false;
+  // The GenAI view of a GenAI trace hides the Non-GenAI spans and lifts their children while the
+  // URL is silent. A trace without GenAI spans gets no default, which would hide every span.
+  const viewDefault =
+    viewType === ETraceViewType.GenAITimelineViewer && traceIsGenAI ? GENAI_VIEW_FILTER : null;
+  const { spanFilter, applyFilter, spanFilterNode } = useSpanFilter(traceData, detailPanelMode, viewDefault);
   const { hiddenIDs } = useMemo(
     () => evaluateSpanFilter(traceData?.spans, spanFilter),
     [traceData?.spans, spanFilter]
@@ -191,7 +206,6 @@ export function TracePageImpl(props: TProps) {
 
   const [headerHeight, setHeaderHeight] = useState<number | TNil>(null);
   const [slimView, setSlimView] = useState(() => Boolean(embedded?.timeline?.collapseTitle));
-  const [viewType, setViewType] = useState<ETraceViewType>(ETraceViewType.TraceTimelineViewer);
   const [viewRange, setViewRange] = useState<IViewRange>({ time: { current: [0, 1] } });
   const [criticalPathErrorDismissed, setCriticalPathErrorDismissed] = useState(false);
 
@@ -199,11 +213,6 @@ export function TracePageImpl(props: TProps) {
   // onSearchResults. Every other view uses the span matches computed below in this component,
   // which keeps the header count working for views without search wiring (flamegraph, logs).
   const [findMatches, setFindMatches] = useState<Set<string> | TNil>(null);
-
-  // Read the trace's own verdict rather than re-deriving it here. It is computed
-  // once from each span's cached genAIKind, so re-scanning attributes is both
-  // redundant and free to drift away from classifySpan as the detector evolves.
-  const traceIsGenAI = traceData?.isGenAITrace ?? false;
 
   const searchBarRef = useRef<InputRef>(null);
   const headerElmRef = useRef<HTMLElement | TNil>(null);
