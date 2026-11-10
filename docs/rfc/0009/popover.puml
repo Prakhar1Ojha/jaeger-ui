@@ -1,15 +1,12 @@
 ' The filter popover that the funnel in cluster.puml opens (RFC 0009, "Controls").
 ' Every control here creates or edits a filter chip. Numeric criteria are histograms of the
 ' whole trace with range handles; categorical criteria are rows with a bar per value. The tree mode
-' sits at the top because the keep controls below it are disabled while the mode is Remove.
+' sits at the bottom, because it is set once and rarely changed.
 @startsalt
 {+
   { <color:#2b8a3e><&eye></color> status: error  × | <color:#c92a2a><&eye></color> service: auth-service  × | <color:#2b8a3e><&eye></color> duration: 120ms – 2.3s  × }
   { <i>12 of 59 spans shown</i> | . | Clear all }
   --
-  {^"Children of a hidden span"
-    ( ) Remove with it | (X) Lift to its parent
-  }
   {^"Status"
     { <back:#dbe4ff> Any </back> | . | Error | . | No error }
   }
@@ -52,6 +49,9 @@
       … | . | . | .
     }
     { Select All | Select None }
+  }
+  {^"Children of a hidden span"
+    ( ) Remove with it | (X) Lift to its parent
   }
   { Save as Default | . | [Apply] <i>(large traces only)</i> }
 }
