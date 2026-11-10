@@ -6,6 +6,7 @@ import React from 'react';
 import SpanDetail from './SpanDetail';
 import DetailState from './SpanDetail/DetailState';
 import SpanTreeOffset from './SpanTreeOffset';
+import { SPAN_TREE, VisibleTree } from './generateRowStates';
 import TimelineRow from './TimelineRow';
 
 import { IOtelSpan, IAttributes, IEvent } from '../../../types/otel';
@@ -26,6 +27,7 @@ type SpanDetailRowProps = {
   linksToggle: (spanID: string) => void;
   warningsToggle: (spanID: string) => void;
   span: IOtelSpan;
+  tree?: VisibleTree;
   attributesToggle: (spanID: string) => void;
   traceStartTime: number;
   focusSpan: (uiFind: string) => void;
@@ -49,6 +51,7 @@ const SpanDetailRow = React.memo((props: SpanDetailRowProps) => {
     linksToggle,
     warningsToggle,
     span,
+    tree = SPAN_TREE,
     attributesToggle,
     traceStartTime,
     focusSpan,
@@ -62,7 +65,7 @@ const SpanDetailRow = React.memo((props: SpanDetailRowProps) => {
     <TimelineRow className="detail-row">
       {timelineBarsVisible && (
         <TimelineRow.Cell width={nameColumnWidth}>
-          <SpanTreeOffset span={span} showChildrenIcon={false} isDetailRow color={color} />
+          <SpanTreeOffset span={span} tree={tree} showChildrenIcon={false} isDetailRow color={color} />
           <span>
             <span
               className="detail-row-expanded-accent"

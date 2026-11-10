@@ -179,6 +179,31 @@ describe('resolveInitialFilter', () => {
     ]);
   });
 
+  it('reads lift mode from tree=lift and skips root protection in it', () => {
+    vi.mocked(decodeSvcFilter).mockReturnValue({ visibleServices: new Set(['svc-b']), stale: false });
+    const result = resolveInitialFilter('?svcFilter=abc.1&tree=lift', ['svc-a', 'svc-b'], roots);
+    expect(result.filter).toEqual(
+      withHiddenServices({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' }, new Set(['svc-a']))
+    );
+    expect(result.cleanSearch).toBeUndefined();
+  });
+
+  it('reads lift mode from tree=lift alone and applies the saved default next to it', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
+    const result = resolveInitialFilter('?tree=lift', ['svc-a', 'svc-b', 'svc-c'], roots);
+    expect(result.filter).toEqual(
+      withHiddenServices({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' }, new Set(['svc-b']))
+    );
+  });
+
+  it('applies a saved default that hides the sole root in lift mode but not in remove mode', () => {
+    localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-a'] }));
+    expect(hiddenServices(resolveInitialFilter('?tree=lift', ['svc-a', 'svc-b'], roots).filter)).toEqual(
+      new Set(['svc-a'])
+    );
+    expect(hiddenServices(resolveInitialFilter('', ['svc-a', 'svc-b'], roots).filter).size).toBe(0);
+  });
+
   it('falls through to the saved default when every f value is malformed', () => {
     localStorage.setItem('svcFilter.defaults', JSON.stringify({ prunedServices: ['svc-b'] }));
     const result = resolveInitialFilter('?f=garbage&f=', ['svc-a', 'svc-b', 'svc-c'], roots);
@@ -297,6 +322,13 @@ describe('buildFilterSearch', () => {
     };
     const search = buildFilterSearch('?uiFind=x', ['svc-a'], filter);
     expect(search).toBe('?f=k%3Astatus%3Aerror&f=h%3Aattr%3Ahttp.method%3AGET&uiFind=x');
+  });
+
+  it('writes tree=lift for lift mode and removes it for remove mode', () => {
+    expect(buildFilterSearch('?uiFind=x', ['svc-a'], { ...EMPTY_SPAN_FILTER, treeMode: 'lift' })).toBe(
+      '?tree=lift&uiFind=x'
+    );
+    expect(buildFilterSearch('?tree=lift', ['svc-a'], EMPTY_SPAN_FILTER)).toBe('');
   });
 
   it('writes a URL that resolves back to the same filter', () => {
@@ -520,6 +552,15 @@ describe('useServiceFilter hook', () => {
     renderHook(() => useServiceFilter(makeTrace(['svc-a', 'svc-b']), 'inline'));
     expect(mockSetSpanFilter).not.toHaveBeenCalled();
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it('does not sanitize the root service away in lift mode', () => {
+    mockStoreState.spanFilter = { ...EMPTY_SPAN_FILTER, treeMode: 'lift' };
+    render(React.createElement(HookRenderer, { trace: makeTrace(['svc-a', 'svc-b']), mode: 'inline' }));
+    capturedOnApply!(new Set(['svc-a']));
+    expect(mockSetSpanFilter).toHaveBeenLastCalledWith(
+      withHiddenServices({ ...EMPTY_SPAN_FILTER, treeMode: 'lift' }, new Set(['svc-a']))
+    );
   });
 
   it('preserves the other clauses when the popover applies a service selection', () => {

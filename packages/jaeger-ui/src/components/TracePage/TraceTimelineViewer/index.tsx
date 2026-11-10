@@ -1,7 +1,7 @@
 // Copyright (c) 2017 Uber Technologies, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import {
   getSelectedSpanID,
@@ -21,7 +21,9 @@ import {
 } from './store.track';
 import SpanDetailSidePanel from './SpanDetailSidePanel';
 import TimelineHeaderRow from './TimelineHeaderRow';
+import { collapseTargets } from './generateRowStates';
 import { useServiceFilter } from './useServiceFilter';
+import { evaluateSpanFilter } from '../spanFilter';
 import { useSpanPillsEnabled } from './spanPills';
 import VirtualizedTraceView from './VirtualizedTraceView';
 import { merge as mergeShortcuts } from '../keyboard-shortcuts';
@@ -82,6 +84,14 @@ export const TraceTimelineViewerImpl = (props: TProps) => {
   const zustandCollapseOne = useTraceTimelineStore(s => s.collapseOne);
   const zustandExpandAll = useTraceTimelineStore(s => s.expandAll);
   const zustandExpandOne = useTraceTimelineStore(s => s.expandOne);
+  const spanFilter = useTraceTimelineStore(s => s.spanFilter);
+  // The bulk collapse actions walk the spans that have rows, at their depth in the drawn tree, so
+  // that a hidden span cannot absorb a level of "collapse one" or "expand one" that the user never
+  // sees.
+  const collapseSpans = useMemo(() => {
+    const { hiddenIDs } = evaluateSpanFilter(trace.spans, spanFilter);
+    return collapseTargets(trace.spans, hiddenIDs, spanFilter.treeMode);
+  }, [trace.spans, spanFilter]);
 
   const setSpanNameColumnWidth = useCallback(
     (width: number) => {
@@ -104,13 +114,13 @@ export const TraceTimelineViewerImpl = (props: TProps) => {
 
   const collapseAll = useCallback(() => {
     trackCollapseAll();
-    zustandCollapseAll(trace.spans);
-  }, [trace.spans, zustandCollapseAll]);
+    zustandCollapseAll(collapseSpans);
+  }, [collapseSpans, zustandCollapseAll]);
 
   const collapseOne = useCallback(() => {
     trackCollapseOne();
-    zustandCollapseOne(trace.spans);
-  }, [trace.spans, zustandCollapseOne]);
+    zustandCollapseOne(collapseSpans);
+  }, [collapseSpans, zustandCollapseOne]);
 
   const expandAll = useCallback(() => {
     trackExpandAll();
@@ -119,8 +129,8 @@ export const TraceTimelineViewerImpl = (props: TProps) => {
 
   const expandOne = useCallback(() => {
     trackExpandOne();
-    zustandExpandOne(trace.spans);
-  }, [trace.spans, zustandExpandOne]);
+    zustandExpandOne(collapseSpans);
+  }, [collapseSpans, zustandExpandOne]);
 
   useEffect(() => {
     mergeShortcuts({
