@@ -2,24 +2,38 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Badge, Button, Checkbox, Popover, Radio, Tooltip } from 'antd';
+import { Badge, Button, Input, Popover, Radio, Tooltip } from 'antd';
 import { IoClose, IoEye, IoEyeOff, IoFunnel, IoFunnelOutline } from 'react-icons/io5';
 
+import FacetList, { FacetRow, rowState } from './FacetList';
+import RangeFacet from './RangeFacet';
+import Section, { KeepControl, TOOLTIP_TRIGGERS } from './Section';
+
+export { TOOLTIP_TRIGGERS };
+import { formatTokenCount } from '../SpanDetail/GenAITab/genAiData';
 import colorGenerator from '../../../../utils/color-generator';
+import { formatDuration } from '../../../../utils/date';
 import { IOtelTrace } from '../../../../types/otel';
+import { Microseconds } from '../../../../types/units';
 import {
   describeCriterion,
   hiddenServices,
   hidesEverySpan,
   IClause,
   ISpanFilter,
+  keepRange,
+  setClauseValues,
+  SetProperty,
+  setValueLabel,
   spanFiltersEqual,
+  traceFacets,
   TreeMode,
   Verb,
-  withHiddenServices,
   normalizeFilter,
   KEEP_NEEDS_LIFT,
   LEAVES_NO_SPAN,
+  withKeepRange,
+  withKeptAndHidden,
 } from '../../spanFilter';
 
 import './ServiceFilter.css';
@@ -45,9 +59,6 @@ function nextVerb(verb: Verb, treeMode: TreeMode): Verb | null {
   return treeMode === 'lift' ? 'keep' : null;
 }
 
-// antd opens a tooltip on hover only, which leaves keyboard users without the text.
-export const TOOLTIP_TRIGGERS: Array<'hover' | 'focus'> = ['hover', 'focus'];
-
 // The popover keeps at least this height, and this much of the viewport stays free below it.
 const POPOVER_MIN_HEIGHT = 120;
 const POPOVER_MARGIN = 16;
@@ -59,12 +70,31 @@ function VerbIcon({ verb }: { verb: Verb }) {
   return verb === 'keep' ? <IoEye aria-hidden /> : <IoEyeOff aria-hidden />;
 }
 
+// The rows of a value list, largest count first, so that the list reads as a breakdown.
+function countRows(property: SetProperty, counts: ReadonlyMap<string, number>): FacetRow[] {
+  return [...counts]
+    .map(([value, count]) => ({ value, label: setValueLabel(property, value), count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+const formatMicros = (v: number) => formatDuration(v as Microseconds);
+const formatTokens = (v: number) => formatTokenCount(v) ?? String(v);
+
+// A facet over one value, or none, has nothing to choose from, and a range handle would only
+// cut that value off, so the facet is drawn only when the sorted values differ on the axis, which
+// starts at one.
+function hasSpread(values: ReadonlyArray<number>): boolean {
+  return values[values.length - 1] > Math.max(values[0], 1);
+}
+
 /**
  * The funnel button and the filter popover of RFC 0009. The popover lists the active chips with
- * their verb, the tree mode, and the service list, and applies a change as it is made unless the
- * trace is larger than the apply threshold, in which case list edits wait for Apply. Removing a
- * chip, switching its verb or switching the tree mode applies at once at any size, together with
- * the list edits that are waiting.
+ * their verb, the tree mode, the duration, token and attribute controls and the status, span type,
+ * kind and service lists, and applies a change as it is made unless the trace is larger than the apply threshold,
+ * in which case the edits wait for Apply. Removing a chip, switching its verb or switching the
+ * tree mode applies at once at any size, together with the edits that are waiting. The controls
+ * that create a keep clause are disabled in remove mode, where a keep clause would hide the root
+ * and with it the whole trace.
  */
 export default function SpanFilterButton({
   trace,
@@ -82,6 +112,7 @@ export default function SpanFilterButton({
   const editing = draft ?? filter;
   const needsApply = trace.spans.length > applyThreshold;
 
+  const facets = traceFacets(trace.spans);
   const serviceEntries = useMemo(
     () => [...trace.services].sort((a, b) => a.name.localeCompare(b.name)),
     [trace.services]
@@ -98,9 +129,8 @@ export default function SpanFilterButton({
 
   // Remove mode needs at least one root service visible, because hiding every root empties the
   // tree; lift mode does not, because a hidden root's children become roots.
-  const protectRoots = editing.treeMode === 'remove';
-  const lockedService = protectRoots && rootServices.size === 1 ? [...rootServices][0] : null;
-  const pruned = useMemo(() => hiddenServices(editing), [editing]);
+  const keepAllowed = editing.treeMode === 'lift';
+  const lockedService = !keepAllowed && rootServices.size === 1 ? [...rootServices][0] : null;
 
   // A filter that hides every service, or that leaves no span of the trace shown, empties the tree,
   // and the warning says which. The hide set is matched by name, because a URL can name a service
@@ -169,39 +199,98 @@ export default function SpanFilterButton({
   const stage = useCallback((edit: Edit) => applyEdit(edit, true), [applyEdit]);
   const commitNow = useCallback((edit: Edit) => applyEdit(edit, false), [applyEdit]);
 
-  const toggleService = useCallback(
-    (name: string) => {
-      // The sole root service cannot be hidden, but a draft that already hides it can show it again.
-      if (name === lockedService && !pruned.has(name)) return;
+  // The row actions of a value list. The crossed-out eye hides a visible value and shows a hidden
+  // one. With a keep clause on the property, a value is shown by adding it to the keep clause and
+  // hidden by taking it out, and hiding the last kept value turns the keep clause into a hide
+  // clause on every value, so that the rows keep the state they showed. The eye keeps only that
+  // value, replacing the property's clauses, and a second click on it clears the keep clause
+  // again. Select All clears both clauses and Select None hides every value.
+  const toggleHidden = useCallback(
+    (property: SetProperty, value: string) =>
       stage(f => {
-        const next = new Set(hiddenServices(f));
-        if (next.has(name)) next.delete(name);
-        else next.add(name);
-        return withHiddenServices(f, next);
-      });
-    },
-    [lockedService, pruned, stage]
+        const hidden = setClauseValues(f, 'hide', property);
+        const kept = setClauseValues(f, 'keep', property);
+        if (rowState(hidden, kept, value).isHidden) {
+          hidden.delete(value);
+          if (kept.size > 0) kept.add(value);
+          // A keep clause that names every value of the trace keeps nothing out, so it goes.
+          if ([...facets.values[property].keys()].every(v => kept.has(v))) kept.clear();
+        } else {
+          // Only the kept values that the trace has count as kept rows; a URL clause may name
+          // others.
+          const keptRows = [...kept].filter(v => facets.values[property].has(v)).length;
+          if (keptRows > 1) {
+            kept.delete(value);
+          } else if (keptRows === 1) {
+            kept.clear();
+            facets.values[property].forEach((_, v) => hidden.add(v));
+          } else {
+            hidden.add(value);
+          }
+        }
+        return withKeptAndHidden(f, property, kept, hidden);
+      }),
+    [facets, stage]
   );
-
-  const selectAll = useCallback(() => stage(f => withHiddenServices(f, new Set())), [stage]);
+  const only = useCallback(
+    (property: SetProperty, value: string) =>
+      stage(f => {
+        const kept = setClauseValues(f, 'keep', property);
+        const { isOnly } = rowState(new Set(), kept, value);
+        return withKeptAndHidden(f, property, isOnly ? new Set() : new Set([value]), new Set());
+      }),
+    [stage]
+  );
+  const selectAll = useCallback(
+    (property: SetProperty) => stage(f => withKeptAndHidden(f, property, new Set(), new Set())),
+    [stage]
+  );
   const selectNone = useCallback(
-    () =>
-      stage(f =>
-        withHiddenServices(f, new Set(serviceEntries.filter(s => s.name !== lockedService).map(s => s.name)))
-      ),
-    [lockedService, serviceEntries, stage]
+    (property: SetProperty) =>
+      stage(f => {
+        const values = new Set(
+          [...facets.values[property].keys()].filter(v => property !== 'service' || v !== lockedService)
+        );
+        return withKeptAndHidden(f, property, new Set(), values);
+      }),
+    [facets, lockedService, stage]
   );
+  const [attribute, setAttribute] = useState('');
+  const addAttribute = useCallback(() => {
+    const text = attribute.trim();
+    // The read-only input of remove mode still reports Enter.
+    if (!text || !keepAllowed) return;
+    stage(f => ({
+      ...f,
+      clauses: [...f.clauses, { verb: 'keep', criterion: { shape: 'attr', text } }],
+    }));
+    setAttribute('');
+  }, [attribute, keepAllowed, stage]);
 
   const setTreeMode = useCallback((treeMode: TreeMode) => commitNow(f => ({ ...f, treeMode })), [commitNow]);
   const removeClause = useCallback(
     (clause: IClause) => commitNow(f => ({ ...f, clauses: f.clauses.filter(c => c !== clause) })),
     [commitNow]
   );
+  // A switched chip keeps its place, so that it does not move under the pointer. A range chip that
+  // switches to keep replaces the keep range of the same property, because the slider draws one
+  // keep range per property; hide ranges combine, so a switch to hide leaves them in place.
   const switchVerb = useCallback(
     (clause: IClause) =>
       commitNow(f => {
         const next = nextVerb(clause.verb, f.treeMode);
-        return next ? { ...f, clauses: f.clauses.map(c => (c === clause ? { ...c, verb: next } : c)) } : f;
+        if (!next) return f;
+        const displaced = (c: IClause) =>
+          c !== clause &&
+          next === 'keep' &&
+          c.verb === 'keep' &&
+          c.criterion.shape === 'range' &&
+          clause.criterion.shape === 'range' &&
+          c.criterion.property === clause.criterion.property;
+        return {
+          ...f,
+          clauses: f.clauses.filter(c => !displaced(c)).map(c => (c === clause ? { ...c, verb: next } : c)),
+        };
       }),
     [commitNow]
   );
@@ -213,14 +302,59 @@ export default function SpanFilterButton({
     setOpen(false);
   }, [draft, onChange]);
 
+  // The saved default is the hidden services, so a keep clause on service is saved as the hide
+  // clause on the services it leaves out.
   const saveAsDefault = useCallback(() => {
-    onChange(editing, { saveAsDefault: true });
+    const kept = setClauseValues(editing, 'keep', 'service');
+    const hidden = setClauseValues(editing, 'hide', 'service');
+    if (kept.size > 0) serviceEntries.forEach(s => !kept.has(s.name) && hidden.add(s.name));
+    onChange(kept.size > 0 ? withKeptAndHidden(editing, 'service', new Set(), hidden) : editing, {
+      saveAsDefault: true,
+    });
     setDraft(null);
     setOpen(false);
-  }, [editing, onChange]);
+  }, [editing, onChange, serviceEntries]);
 
   const activeCount = filter.clauses.length;
   const visibleCount = trace.spans.length - hiddenCount;
+
+  const facetList = (property: SetProperty, title: string, rows: FacetRow[]) => (
+    <FacetList
+      title={title}
+      rows={rows}
+      hidden={setClauseValues(editing, 'hide', property)}
+      kept={setClauseValues(editing, 'keep', property)}
+      keepAllowed={keepAllowed}
+      onToggleHidden={value => toggleHidden(property, value)}
+      onOnly={value => only(property, value)}
+      onSelectAll={() => selectAll(property)}
+      onSelectNone={() => selectNone(property)}
+    />
+  );
+  const serviceRows: FacetRow[] = serviceEntries.map(({ name }) => ({
+    value: name,
+    label: name,
+    count: facets.values.service.get(name) ?? 0,
+    color: colorGenerator.getColorByKey(name),
+    badge: rootServices.has(name) ? 'root' : undefined,
+    // The sole root service cannot be hidden, but a draft that already hides it can show it again.
+    locked: name === lockedService,
+  }));
+  const statusRows = countRows('status', facets.values.status);
+  const spanTypeRows = countRows('spanType', facets.values.spanType);
+  const kindRows = countRows('kind', facets.values.kind);
+  const attributeInput = (
+    <Input
+      size="small"
+      placeholder="key:value"
+      value={attribute}
+      readOnly={!keepAllowed}
+      aria-disabled={!keepAllowed}
+      onChange={e => setAttribute(e.target.value)}
+      onPressEnter={addAttribute}
+      aria-label="Attribute contains"
+    />
+  );
 
   const content = (
     <div
@@ -287,56 +421,44 @@ export default function SpanFilterButton({
             </div>
           </section>
         )}
-        {serviceEntries.length > 1 && (
-          <section className="SpanFilter--section" aria-label="Service">
-            <div className="SpanFilter--sectionHeader">
-              <span className="SpanFilter--sectionTitle">Service</span>
-              <span className="SpanFilter--sectionActions">
-                <Button size="small" type="link" onClick={selectAll}>
-                  Select All
-                </Button>
-                <Button size="small" type="link" onClick={selectNone}>
-                  Select None
-                </Button>
-              </span>
-            </div>
-            <div className="ServiceFilter--list" role="group" aria-label="Service visibility">
-              {serviceEntries.map(({ name, numberOfSpans }) => {
-                const isVisible = !pruned.has(name);
-                const color = colorGenerator.getColorByKey(name);
-                const isRoot = rootServices.has(name);
-                return (
-                  <div key={name} className="ServiceFilter--item">
-                    <Checkbox
-                      checked={isVisible}
-                      disabled={name === lockedService && isVisible}
-                      onChange={() => toggleService(name)}
-                      aria-label={`${isVisible ? 'Hide' : 'Show'} ${name}`}
-                    >
-                      <span className="ServiceFilter--colorDot" style={{ backgroundColor: color }} />
-                      <span className="ServiceFilter--serviceName" title={name}>
-                        {name}
-                      </span>
-                      {isRoot && <span className="ServiceFilter--rootBadge">root</span>}
-                      <span className="ServiceFilter--spanCount">
-                        ({numberOfSpans} {numberOfSpans === 1 ? 'span' : 'spans'})
-                      </span>
-                    </Checkbox>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+        {statusRows.length > 1 && facetList('status', 'Status', statusRows)}
+        {hasSpread(facets.ranges.duration) && (
+          <RangeFacet
+            title="Span duration"
+            values={facets.ranges.duration}
+            range={keepRange(editing, 'duration')}
+            format={formatMicros}
+            keepAllowed={keepAllowed}
+            onChange={range => stage(f => withKeepRange(f, 'duration', range))}
+          />
         )}
-        <section className="SpanFilter--section" aria-label="Children of a hidden span">
-          <div className="SpanFilter--sectionHeader">
-            <span className="SpanFilter--sectionTitle">Children of a hidden span</span>
+        {hasSpread(facets.ranges.tokens) && (
+          <RangeFacet
+            title="Span tokens"
+            values={facets.ranges.tokens}
+            range={keepRange(editing, 'tokens')}
+            format={formatTokens}
+            keepAllowed={keepAllowed}
+            onChange={range => stage(f => withKeepRange(f, 'tokens', range))}
+          />
+        )}
+        <Section title="Attribute contains">
+          <div className="SpanFilter--attribute">
+            <KeepControl allowed={keepAllowed}>{attributeInput}</KeepControl>
+            <Button size="small" disabled={!keepAllowed || !attribute.trim()} onClick={addAttribute}>
+              Keep
+            </Button>
           </div>
+        </Section>
+        {spanTypeRows.length > 1 && facetList('spanType', 'GenAI span type', spanTypeRows)}
+        {kindRows.length > 1 && facetList('kind', 'Span kind', kindRows)}
+        {serviceRows.length > 1 && facetList('service', 'Service', serviceRows)}
+        <Section title="Children of a hidden span" collapsible={false}>
           <Radio.Group value={editing.treeMode} onChange={e => setTreeMode(e.target.value as TreeMode)}>
             <Radio value="remove">Remove with it</Radio>
             <Radio value="lift">Lift to its parent</Radio>
           </Radio.Group>
-        </section>
+        </Section>
       </div>
       {warning && (
         <div className="ServiceFilter--warning" role="alert">

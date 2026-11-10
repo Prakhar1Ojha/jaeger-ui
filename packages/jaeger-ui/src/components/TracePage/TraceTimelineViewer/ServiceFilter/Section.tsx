@@ -1,0 +1,60 @@
+// Copyright (c) 2026 The Jaeger Authors.
+// SPDX-License-Identifier: Apache-2.0
+
+import React, { useState } from 'react';
+import { Tooltip } from 'antd';
+import { IoChevronDown, IoChevronForward } from 'react-icons/io5';
+
+import { KEEP_NEEDS_LIFT } from '../../spanFilter';
+
+// The tooltips open on keyboard focus as well as on hover, so a keyboard user gets the same hints.
+export const TOOLTIP_TRIGGERS: Array<'hover' | 'focus'> = ['hover', 'focus'];
+
+/**
+ * A control that creates a keep clause, with the tooltip that says why it is disabled in remove
+ * mode. The control stays focusable while it is disabled, so that a keyboard user reaches the reason.
+ */
+export function KeepControl({ allowed, children }: { allowed: boolean; children: React.ReactElement }) {
+  return allowed ? (
+    children
+  ) : (
+    <Tooltip title={KEEP_NEEDS_LIFT} trigger={TOOLTIP_TRIGGERS}>
+      {children}
+    </Tooltip>
+  );
+}
+
+type SectionProps = {
+  title: string;
+  // Controls shown in the header next to the title, such as Select All.
+  actions?: React.ReactNode;
+  // A section that cannot be collapsed renders its title as plain text.
+  collapsible?: boolean;
+  children: React.ReactNode;
+};
+
+/** One section of the filter popover: a header with the title and its actions, and a body that a collapsible section can fold. */
+export default function Section({ title, actions, collapsible = true, children }: SectionProps) {
+  const [open, setOpen] = useState(true);
+  return (
+    <section className="SpanFilter--section" aria-label={title}>
+      <div className="SpanFilter--sectionHeader">
+        {collapsible ? (
+          <button
+            type="button"
+            className="SpanFilter--sectionToggle"
+            aria-expanded={open}
+            onClick={() => setOpen(o => !o)}
+          >
+            {open ? <IoChevronDown aria-hidden /> : <IoChevronForward aria-hidden />}
+            <span className="SpanFilter--sectionTitle">{title}</span>
+          </button>
+        ) : (
+          <span className="SpanFilter--sectionTitle">{title}</span>
+        )}
+        {open && actions && <span className="SpanFilter--sectionActions">{actions}</span>}
+      </div>
+      {open && children}
+    </section>
+  );
+}
