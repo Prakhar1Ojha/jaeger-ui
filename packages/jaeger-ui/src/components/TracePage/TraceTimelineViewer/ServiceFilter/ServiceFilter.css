@@ -108,6 +108,12 @@ SPDX-License-Identifier: Apache-2.0
   gap: 0.5rem;
 }
 
+.SpanFilter--sectionLead {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .SpanFilter--sectionTitle {
   font-weight: 600;
   color: var(--text-primary);
@@ -291,9 +297,32 @@ SPDX-License-Identifier: Apache-2.0
   opacity: 0.4;
 }
 
-.SpanFilter--attribute .ant-input[readonly] {
-  cursor: not-allowed;
-  opacity: 0.6;
+.SpanFilter--help {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding: 2px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: help;
+}
+
+.SpanFilter--help:hover {
+  color: var(--text-primary);
+}
+
+.SpanFilter--helpText p,
+.SpanFilter--helpText ul {
+  margin: 0 0 0.4rem;
+}
+
+.SpanFilter--helpText p:last-child {
+  margin-bottom: 0;
+}
+
+.SpanFilter--helpText ul {
+  padding-left: 1.2rem;
 }
 
 .RangeFacet--histogram {

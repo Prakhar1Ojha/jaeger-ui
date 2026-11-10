@@ -57,7 +57,11 @@ function makeTrace(serviceNames: string[], rootServiceNames?: string[], spanCoun
 }
 
 // The crossed-out eye of every value row, in list order.
-const hideButtons = () => screen.getAllByRole('button', { name: /^(Hide|Show) / });
+// The eye of each list row; the attribute section's "Hide spans with it" is not a row.
+const hideButtons = () =>
+  screen
+    .getAllByRole('button', { name: /^(Hide|Show) / })
+    .filter(b => !/ spans with it$/.test(b.getAttribute('aria-label') ?? ''));
 const visibleTooltip = () => document.querySelector('.ant-tooltip:not(.ant-tooltip-hidden)');
 
 // The slider moves a handle on key down and reports the change complete on key up.
@@ -176,7 +180,7 @@ describe('SpanFilterButton', () => {
   it('omits the service list for a single-service trace', async () => {
     renderButton(makeTrace(['only-svc']));
     await open();
-    expect(screen.queryByRole('button', { name: /^Hide / })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Hide only-svc/ })).toBeNull();
     expect(screen.getByText('Children of a hidden span')).toBeInTheDocument();
   });
 
@@ -1421,30 +1425,39 @@ describe('SpanFilterButton', () => {
       });
     });
 
-    it('is read-only in remove mode, with the reason on keyboard focus', async () => {
-      renderButton(makeTrace(['svc-a', 'svc-b']));
-      await open();
-      const input = screen.getByRole('textbox', { name: 'Attribute contains' });
-      expect(input).toHaveAttribute('readonly');
-      expect(input).toHaveAttribute('aria-disabled', 'true');
-      fireEvent.focus(input);
-      await waitFor(() => expect(visibleTooltip()).toHaveTextContent(KEEP_NEEDS_LIFT));
-    });
-
-    it('ignores Enter in remove mode on text typed before the mode switch', async () => {
-      // The root carries the attribute, so the keep clause would not be held for hiding the root.
-      const trace = withAttribute(makeTrace(['svc-a', 'svc-b']), 'k', 'v', 0);
-      render(<Stateful trace={trace} treeMode="lift" />);
+    it('adds a hide clause from the crossed eye, in remove mode too', async () => {
+      render(<Stateful trace={withAttribute(makeTrace(['svc-a', 'svc-b']), 'k', 'v')} />);
       await open();
       const input = screen.getByRole('textbox', { name: 'Attribute contains' });
       fireEvent.change(input, { target: { value: 'k:v' } });
-      fireEvent.click(screen.getByLabelText('Remove with it'));
-      onChange.mockClear();
-      // The input remounts under its tooltip on the mode switch, so it is queried again.
-      const readOnly = screen.getByRole('textbox', { name: 'Attribute contains' });
-      expect(readOnly).toHaveValue('k:v');
-      fireEvent.keyDown(readOnly, { key: 'Enter', code: 'Enter' });
+      fireEvent.click(screen.getByRole('button', { name: 'Hide spans with it' }));
+      expect(onChange).toHaveBeenLastCalledWith({
+        treeMode: 'remove',
+        clauses: [{ verb: 'hide', criterion: { shape: 'attr', text: 'k:v' } }],
+      });
+      expect(input).toHaveValue('');
+    });
+
+    it('disables the keep eye in remove mode, with the reason on keyboard focus', async () => {
+      renderButton(makeTrace(['svc-a', 'svc-b']));
+      await open();
+      const keep = screen.getByRole('button', { name: 'Keep spans with it' });
+      expect(keep).toHaveAttribute('aria-disabled', 'true');
+      fireEvent.focus(keep);
+      await waitFor(() => expect(visibleTooltip()).toHaveTextContent(KEEP_NEEDS_LIFT));
+    });
+
+    it('ignores Enter and the keep eye in remove mode', async () => {
+      // The root carries the attribute, so the keep clause would not be held for hiding the root.
+      const trace = withAttribute(makeTrace(['svc-a', 'svc-b']), 'k', 'v', 0);
+      render(<Stateful trace={trace} />);
+      await open();
+      const input = screen.getByRole('textbox', { name: 'Attribute contains' });
+      fireEvent.change(input, { target: { value: 'k:v' } });
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+      fireEvent.click(screen.getByRole('button', { name: 'Keep spans with it' }));
       expect(onChange).not.toHaveBeenCalled();
+      expect(input).toHaveValue('k:v');
     });
 
     it('ignores an empty input', async () => {
@@ -1454,8 +1467,24 @@ describe('SpanFilterButton', () => {
         key: 'Enter',
         code: 'Enter',
       });
+      fireEvent.click(screen.getByRole('button', { name: 'Keep spans with it' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Hide spans with it' }));
       expect(onChange).not.toHaveBeenCalled();
-      expect(screen.getByRole('button', { name: 'Keep' })).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Keep spans with it' })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      expect(screen.getByRole('button', { name: 'Hide spans with it' })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+    });
+
+    it('explains the syntax behind the question mark', async () => {
+      renderButton(makeTrace(['svc-a', 'svc-b']));
+      await open();
+      fireEvent.focus(screen.getByRole('button', { name: 'Attribute contains help' }));
+      await waitFor(() => expect(visibleTooltip()).toHaveTextContent('http.method:GET'));
     });
   });
 

@@ -38,6 +38,34 @@ import {
 
 import './ServiceFilter.css';
 
+const ATTRIBUTE_HELP = (
+  <div className="SpanFilter--helpText">
+    <p>
+      One <code>key:value</code> term, matched case-insensitively as a substring of each span or resource
+      attribute written as <code>key:value</code>.
+    </p>
+    <ul>
+      <li>
+        <code>http.method:GET</code> matches key and value
+      </li>
+      <li>
+        <code>http.method</code> matches any value of that key
+      </li>
+      <li>
+        <code>:GET</code> matches the value, whatever the key
+      </li>
+      <li>
+        <code>http.status_code:20</code> matches <code>200</code> and <code>201</code>: this is a substring
+        match, not a comparison
+      </li>
+    </ul>
+    <p>
+      Unlike Find: one term only, no quotes, no <code>-key</code>, and span names, service names and events
+      are not searched.
+    </p>
+  </div>
+);
+
 type SpanFilterButtonProps = {
   trace: IOtelTrace;
   filter: ISpanFilter;
@@ -256,16 +284,15 @@ export default function SpanFilterButton({
     [facets, lockedService, stage]
   );
   const [attribute, setAttribute] = useState('');
-  const addAttribute = useCallback(() => {
-    const text = attribute.trim();
-    // The read-only input of remove mode still reports Enter.
-    if (!text || !keepAllowed) return;
-    stage(f => ({
-      ...f,
-      clauses: [...f.clauses, { verb: 'keep', criterion: { shape: 'attr', text } }],
-    }));
-    setAttribute('');
-  }, [attribute, keepAllowed, stage]);
+  const addAttribute = useCallback(
+    (verb: Verb) => {
+      const text = attribute.trim();
+      if (!text || (verb === 'keep' && !keepAllowed)) return;
+      stage(f => ({ ...f, clauses: [...f.clauses, { verb, criterion: { shape: 'attr', text } }] }));
+      setAttribute('');
+    },
+    [attribute, keepAllowed, stage]
+  );
 
   const setTreeMode = useCallback((treeMode: TreeMode) => commitNow(f => ({ ...f, treeMode })), [commitNow]);
   const removeClause = useCallback(
@@ -343,17 +370,17 @@ export default function SpanFilterButton({
   const statusRows = countRows('status', facets.values.status);
   const spanTypeRows = countRows('spanType', facets.values.spanType);
   const kindRows = countRows('kind', facets.values.kind);
-  const attributeInput = (
-    <Input
-      size="small"
-      placeholder="key:value"
-      value={attribute}
-      readOnly={!keepAllowed}
-      aria-disabled={!keepAllowed}
-      onChange={e => setAttribute(e.target.value)}
-      onPressEnter={addAttribute}
-      aria-label="Attribute contains"
-    />
+  const attributeEmpty = !attribute.trim();
+  const attributeKeep = (
+    <button
+      type="button"
+      className={`FacetList--action ${keepAllowed && !attributeEmpty ? '' : 'is-disabled'}`}
+      aria-label="Keep spans with it"
+      aria-disabled={!keepAllowed || attributeEmpty}
+      onClick={() => addAttribute('keep')}
+    >
+      <IoEye aria-hidden />
+    </button>
   );
 
   const content = (
@@ -442,12 +469,26 @@ export default function SpanFilterButton({
             onChange={range => stage(f => withKeepRange(f, 'tokens', range))}
           />
         )}
-        <Section title="Attribute contains">
+        <Section title="Attribute contains" help={ATTRIBUTE_HELP}>
           <div className="SpanFilter--attribute">
-            <KeepControl allowed={keepAllowed}>{attributeInput}</KeepControl>
-            <Button size="small" disabled={!keepAllowed || !attribute.trim()} onClick={addAttribute}>
-              Keep
-            </Button>
+            <Input
+              size="small"
+              placeholder="key:value"
+              value={attribute}
+              onChange={e => setAttribute(e.target.value)}
+              onPressEnter={() => addAttribute('keep')}
+              aria-label="Attribute contains"
+            />
+            <KeepControl allowed={keepAllowed}>{attributeKeep}</KeepControl>
+            <button
+              type="button"
+              className={`FacetList--action ${attributeEmpty ? 'is-disabled' : ''}`}
+              aria-label="Hide spans with it"
+              aria-disabled={attributeEmpty}
+              onClick={() => addAttribute('hide')}
+            >
+              <IoEyeOff aria-hidden />
+            </button>
           </div>
         </Section>
         {spanTypeRows.length > 1 && facetList('spanType', 'GenAI span type', spanTypeRows)}
