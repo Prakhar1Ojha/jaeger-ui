@@ -23,6 +23,7 @@ import { trackSlimHeaderToggle } from './TracePageHeader/TracePageHeader.track';
 import { trackDetailPanelMode, trackTimelineBarsVisible } from './TraceTimelineViewer/store.track';
 import traceGenerator from '../../demo/trace-generators';
 import transformTraceData from '../../model/transform-trace-data';
+import { EMPTY_SPAN_FILTER, withHiddenServices } from './spanFilter';
 import filterSpansSpy from '../../utils/filter-spans';
 import updateUiFindSpy from '../../utils/update-ui-find';
 import { queryClient } from '../../query/app-query-client';
@@ -138,7 +139,7 @@ const {
   },
   mockTraceTimelineStore: {
     focusUiFindMatches: jest.fn(),
-    prunedServices: new Set(),
+    spanFilter: { clauses: [], treeMode: 'remove' },
   },
   useEmbeddedStateMock: jest.fn().mockReturnValue(null),
   useTraceMock: jest.fn(),
@@ -495,7 +496,7 @@ describe('<TracePage>', () => {
     const localTrace = transformTraceData(raw).asOtelTrace();
     const prunedService = localTrace.spanMap.get(raw.spans[1].spanID).resource.serviceName;
     useTraceMock.mockReturnValue({ data: localTrace, isPending: false, isError: false, error: null });
-    mockTraceTimelineStore.prunedServices = new Set([prunedService]);
+    mockTraceTimelineStore.spanFilter = withHiddenServices(EMPTY_SPAN_FILTER, new Set([prunedService]));
 
     render(<TracePage {...defaultProps} params={{ id: raw.traceID }} uiFind="everywhere" />);
 
@@ -503,7 +504,7 @@ describe('<TracePage>', () => {
     // unless the generator gave it the pruned service too.
     const rootService = localTrace.spanMap.get(raw.spans[0].spanID).resource.serviceName;
     expect(capturedHeaderProps.resultCount).toBe(rootService === prunedService ? 0 : 1);
-    mockTraceTimelineStore.prunedServices = new Set();
+    mockTraceTimelineStore.spanFilter = EMPTY_SPAN_FILTER;
     filterSpansSpy.mockImplementation(() => new Set());
   });
 

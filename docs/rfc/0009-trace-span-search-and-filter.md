@@ -95,7 +95,7 @@ A **criterion** is a predicate over one span. The vocabulary has five shapes, an
 | --- | --- | --- | --- |
 | Text terms | `"tools/call" auth` | Any term is a substring of any searched field; `"quoted phrase"` is one term; `-key` excludes attribute keys; a span ID matches exactly. Unchanged from `filterSpans`. | `uiFind` |
 | Value set | status ∈ {error}; service ∈ {auth-service}; span type ∈ {Non-GenAI}; span kind ∈ {server} | The span's value for the property is in the set. | `svcFilter` for service |
-| Numeric range | duration 120 ms – 2.3 s; tokens 1k – 19k | The span's value is inside the inclusive range. Duration is the span's own duration; tokens are the sum of `gen_ai.usage.*` on the span. | none |
+| Numeric range | duration 120 ms – 2.3 s; tokens 1k – 19k | The span's value is inside the inclusive range. Duration is the span's own duration; tokens are the span's input plus output tokens, read the way the GenAI tab reads them, so that the cache and modality breakdowns are not counted twice. | none |
 | Attribute contains | `http.method:GET` | `key:value` is a substring of the flattened `key:value` text of a span or resource attribute; a bare key or a bare value also matches. | partly, via text terms |
 | Span ID | from the search results page | Exact. | `uiFind=<spanID>` |
 
@@ -105,15 +105,15 @@ A criterion is evaluated once per span, in one pass over the trace's pre-order s
 
 A **clause** is a verb applied to a criterion. The three verbs are:
 
-- **find**: the matching spans are highlighted. There is one find clause, and it is the text in the search input.
+- **find**: the matching spans are highlighted. There is one find clause, it is the text in the search input, and it is the only clause that highlights; a chip never does.
 - **keep**: spans that do not match are hidden.
 - **hide**: spans that match are hidden.
 
 Keep and hide clauses are **filter chips**. A span is **visible** when it matches every keep chip and no hide chip. The **highlight set** is the find matches that are visible, so that a count, a highlight and a detail row never refer to a span that is not on screen. The previous, next and locate buttons walk the highlight set exactly as they walk the match set today.
 
-Every chip shows its verb as an icon, an open eye for keep and a crossed-out eye for hide, followed by its criterion and a remove control. The same two icons are used wherever a verb is chosen: in the input's menu, and as the row actions in the popover lists. The verb on a chip can be switched between keep and hide, which is how a user who hid a service turns it into "only this service", and a chip can be switched to find, which turns a structured criterion such as status ∈ {error} into highlighting without hiding anything. That is [#651](https://github.com/jaegertracing/jaeger-ui/issues/651): error spans highlighted, tree intact. The same criterion with the keep verb is [#4580](https://github.com/jaegertracing/jaeger-ui/issues/4580): only the error spans and whatever the tree mode keeps around them remain.
+Every chip shows its verb as an icon, an open eye for keep and a crossed-out eye for hide, followed by its criterion and a remove control. The same two icons are used wherever a verb is chosen: in the input's menu, and as the row actions in the popover lists. The verb on a chip can be switched between keep and hide, which is how a user who hid a service turns it into "only this service", and a structured criterion such as status ∈ {error} highlights without hiding anything when the user types it into the search input. That is [#651](https://github.com/jaegertracing/jaeger-ui/issues/651): error spans highlighted, tree intact. The same criterion with the keep verb is [#4580](https://github.com/jaegertracing/jaeger-ui/issues/4580): only the error spans and whatever the tree mode keeps around them remain.
 
-A keep chip only makes sense in lift mode. In remove mode a hidden span takes its subtree with it, and a keep criterion that the root does not satisfy hides the root, so the controls that create keep chips are disabled while the mode is Remove (see Controls). A keep chip that arrives through a URL in remove mode is evaluated as written and empties the tree, which is what the URL asked for.
+A keep chip only makes sense in lift mode. In remove mode a hidden span takes its subtree with it, and a keep criterion that the root does not satisfy hides the root, so the controls that create keep chips are disabled while the mode is Remove (see Controls). A keep chip that arrives through a URL in remove mode is evaluated as written and empties the tree, which is what the URL asked for. The same holds for a hide chip that matches every root in either mode: the tree is empty, nothing is sanitized away, and the hidden count in the header says that every span is hidden. Only the hide chip on service is protected, because it is the one the popover's checkbox list writes.
 
 The find clause in the search input is never a filter. A menu inside the input, shown only while there is text, has two entries, **Keep matching spans** with the eye icon and **Hide matching spans** with the crossed-out eye; either converts the current text into a chip with that verb and clears the input. The user sees the hidden count appear and sees the tree change because of it, so the conversion is an event and not a mode.
 
@@ -168,17 +168,16 @@ A chip shows its verb icon and a short form of its criterion: "status: error", "
 
 ### URL and persistence
 
-The text stays in `uiFind` and the service hide set stays in `svcFilter`, so every existing link keeps working. Every other chip is one `f` parameter, repeated: `f=<verb>:<property>:<value>`, where `<verb>` is `k`, `h` or `f`, and `<value>` is a comma-separated set for a value-set criterion, `<min>-<max>` with units for a range, and the raw text for an attribute or text criterion. The tree mode is `tree=lift`; its absence means remove mode.
+The text stays in `uiFind` and the service hide set stays in `svcFilter`, so every existing link keeps working. Every other chip is one `f` parameter, repeated: `f=<verb>:<property>:<value>`, where `<verb>` is `k` or `h`, and `<value>` is a comma-separated set for a value-set criterion, `<min>-<max>` with units for a range, and the raw text for an attribute or text criterion. The tree mode is `tree=lift`; its absence means remove mode.
 
 | URL | Meaning |
 | --- | --- |
 | `f=k:status:error` | keep spans whose status is error |
 | `f=h:spanType:none` | hide Non-GenAI spans |
 | `f=k:duration:120ms-2.3s` | keep spans whose duration is in the range |
-| `f=f:status:error` | highlight error spans without hiding anything |
 | `f=h:text:tools/call` | hide spans whose text contains `tools/call` |
 
-A `svcFilter` in the URL is read as a hide chip on service and written back as `svcFilter` as long as the chip is a hide set, so that the compact checksum-and-bitmask encoding from [ADR-0009](../adr/0009-service-filter-trace-timeline.md) stays in use for the common case; a keep chip on service, which `svcFilter` cannot express, is written as `f=k:service:…`. The parameters are written with `replace: true` like `uiFind` and `svcFilter`, and they follow [RFC 0007](./0007-layout-settings-priority-stack.md): a value in the URL wins, a saved default applies when the URL is silent, and a saved default is written only by Save as Default.
+A `svcFilter` in the URL is read as a hide chip on service and written back as `svcFilter` as long as the chip is a hide set, so that the compact checksum-and-bitmask encoding from [ADR-0009](../adr/0009-service-filter-trace-timeline.md) stays in use for the common case; a keep chip on service, which `svcFilter` cannot express, is written as `f=k:service:…`. A comma inside a set value is written as `%2C` and a percent sign as `%25`, before the query string layer escapes the parameter as a whole; a hand-typed URL therefore writes a literal comma as `%252C`. The parameters are written with `replace: true` like `uiFind` and `svcFilter`, and they follow [RFC 0007](./0007-layout-settings-priority-stack.md): a value in the URL wins, a saved default applies when the URL is silent, and a saved default is written only by Save as Default. The saved default is a service hide set, so it applies whenever the URL has no `svcFilter`, next to any `f` clauses the URL carries; a hide clause on service inside `f` is ignored, because `svcFilter` is the only carrier of that set.
 
 The view's **default filter** is the third source. The plain timeline's default is empty. The GenAI view's default is a hide chip on span type `Non-GenAI` in lift mode. When a user changes the filter in the GenAI view, the URL carries the full clause list, and clearing it writes an explicitly empty `f=` so that the default does not come back on the next render, which is the loop that [#3815](https://github.com/jaegertracing/jaeger-ui/issues/3815) worried about.
 
@@ -194,7 +193,7 @@ The fixture `genaiTestTrace.json` has 59 spans in 10 services. `api-edge` and `g
 | hide service ∈ {five leaf services}, remove ([#4312](https://github.com/jaegertracing/jaeger-ui/pull/4312)'s result) | 34 spans + 10 placeholders | Every GenAI span, every `POST /v1/messages`, every `mcp-gateway` span, and a "spans pruned" row under each `mcp-gateway` call and each `retrieval`. |
 | hide span type ∈ {Non-GenAI}, lift | 18 | `invoke_agent triage-agent` as root; its `chat`, `execute_tool` and `retrieval` children; `invoke_agent summarizer` directly under `execute_tool summarize_findings`, with its own `chat`. No HTTP, no gateway, no auth. |
 | keep status ∈ {error}, lift | 1 | The failing `k8s-api GET /api/v1/pods` as the only row. |
-| find status ∈ {error} | 59 | The same span highlighted in place; the locate button collapses the tree to its path. |
+| none, with `error` typed into the search input | 59 | The same span highlighted in place; the locate button collapses the tree to its path. |
 
 The row counts come from applying the rules by hand to the fixture's span list and are to be confirmed by the tests in layer 3 of the plan.
 
@@ -242,7 +241,7 @@ Option C wins on the rows that are about the user: under B the search box silent
 - ³ As a badge on the nearest visible ancestor instead of a placeholder row.
 - ⁴ A hidden span with an error has no visible descendant to keep it, so only the trace total accounts for it.
 
-"Keep ancestors" is the find verb's question, where does this sit, and the find verb already answers it: a find chip plus the locate button collapses the tree to the matches' paths while keeping every row. This RFC does not add it as a third tree mode, because two settings with a crisp meaning each (which verb; remove or lift) are easier to explain than a tree mode whose meaning depends on which clause produced the hidden span.
+"Keep ancestors" is the find verb's question, where does this sit, and the find verb already answers it: typed text plus the locate button collapses the tree to the matches' paths while keeping every row. This RFC does not add it as a third tree mode, because two settings with a crisp meaning each (which verb; remove or lift) are easier to explain than a tree mode whose meaning depends on which clause produced the hidden span.
 
 ### Layout
 
@@ -287,7 +286,7 @@ The work is one stack of pull requests, reviewed bottom to top and merged togeth
 | --- | --- | --- | --- |
 | 0 | `rfc-trace-span-search-filter` | This RFC, its figures and the prototype in `docs/rfc/0009/`. | none |
 | 1 | `span-filter/hidden-ids` | The timeline consumes a set of hidden span IDs instead of a set of service names. `generateRowStates`, `criticalPath`, `VirtualizedTraceView` and `TracePage/index.tsx` take `hiddenIDs: Set<spanID>`; `isSpanPruned` and `filterPrunedSpanIDs` become set lookups. The store derives `hiddenIDs` from `prunedServices` and the trace it already holds, so the service filter UI and the URL are untouched. | none |
-| 2 | `span-filter/clauses` | `TracePage/spanFilter.ts`: the criterion shapes, the clause list, `evaluateClauses(trace, clauses, treeMode) → { hiddenIDs, findIDs }`, and the `f=` and `tree=` codec. The store replaces `prunedServices` with `clauses` and `treeMode`; `useServiceFilter` becomes `useSpanFilter`, which resolves `svcFilter` and `f` from the URL, then the saved default, and writes `svcFilter` back for a hide set on service and `f` for everything else. The service checkbox list reads and writes the service hide clause. Root protection stays in remove mode. Every clause is reachable through the URL; lift mode is not, because row generation does not yet support it. | none |
+| 2 | `span-filter/clauses` | `TracePage/spanFilter.ts`: the criterion shapes, the clause list, `evaluateSpanFilter(spans, filter) → { hiddenIDs, findIDs }`, and the `f=` codec. The store replaces `prunedServices` with one `spanFilter` of clauses and tree mode; `useServiceFilter` resolves the service hide set from `svcFilter`, else from the saved default, and the other clauses from `f`, and writes `svcFilter` back for the hide set on service and `f` for everything else. The service checkbox list reads and writes the service hide clause. Root protection stays in remove mode. Every clause is reachable through the URL; lift mode is not, because row generation does not yet support it. | none |
 | 3 | `span-filter/lift-mode` | Lift mode in `buildVisibleRows`: `RowState` gains `visibleDepth`, the visible-ancestor list, the hidden spans a lifted row passed over, and the hidden error spans credited to a row. `SpanTreeOffset`, the indent guides, collapse and critical path read the visible parent. `SpanBarRow` renders the connector glyph on lifted rows and the hidden-errors badge. Tests on `genaiTestTrace.json` assert the row counts in the worked example. A benchmark of clause evaluation plus row generation on 10k and 80k spans sets the default for the immediate-apply threshold. | only through `tree=lift` in the URL |
 | 4 | `span-filter/cluster` | The one-line cluster: the funnel next to the search input with its badge, the second funnel kept in the column header, the "N hidden" count, the error count in the trace caption, and the input's keep-or-hide menu that converts the text into a chip. The popover gains the Active chips section with verb switching and removal, the tree mode control at its top, and the keep controls disabled in remove mode. The immediate-apply threshold becomes a UI configuration value and the Apply button is rendered only above it. | the cluster, the chips, the tree mode |
 | 5 | `span-filter/facets` | The rest of the popover: Status, the duration and token histograms, the attribute input, the span type and span kind lists, the eye row actions and bars on every list including Service, Select All and Select None, and the collapsible sections. | the full popover |
