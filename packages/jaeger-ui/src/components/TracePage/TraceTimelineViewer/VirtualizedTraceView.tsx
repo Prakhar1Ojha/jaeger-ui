@@ -46,6 +46,7 @@ import './VirtualizedTraceView.css';
 import updateUiFind from '../../../utils/update-ui-find';
 import { PEER_SERVICE } from '../../../constants/tag-keys';
 import withRouteProps from '../../../utils/withRouteProps';
+import { hiddenSpanIDsForServices } from '../spanFilter';
 
 type RowStateData = {
   rows: RowState[];
@@ -85,7 +86,7 @@ type RouteProps = {
 
 type TDerivedStateProps = {
   selectedSpanID: string | null;
-  prunedServices: Set<string>;
+  hiddenIDs: ReadonlySet<string>;
 };
 
 type VirtualizedTraceViewProps = TVirtualizedTraceViewOwnProps &
@@ -109,7 +110,7 @@ function generateRowStatesFromTrace(
   childrenHiddenIDs: Set<string>,
   detailStates: Map<string, DetailState | TNil>,
   detailPanelMode: 'inline' | 'sidepanel',
-  prunedServices: Set<string>
+  hiddenIDs: ReadonlySet<string>
 ): RowStateData {
   if (!trace) {
     return {
@@ -118,13 +119,7 @@ function generateRowStatesFromTrace(
     };
   }
 
-  const rows = generateRowStates(
-    trace.spans,
-    childrenHiddenIDs,
-    detailStates,
-    detailPanelMode,
-    prunedServices
-  );
+  const rows = generateRowStates(trace.spans, childrenHiddenIDs, detailStates, detailPanelMode, hiddenIDs);
 
   const spanIndexToRowIndex = new Map<number, number>();
 
@@ -165,14 +160,13 @@ export const VirtualizedTraceViewImpl = React.memo(function VirtualizedTraceView
   propsRef.current = props;
 
   const criticalPathContext = useMemo(
-    () => makeCriticalPathContext(props.trace, props.criticalPath, props.prunedServices),
-    [props.trace, props.criticalPath, props.prunedServices]
+    () => makeCriticalPathContext(props.trace, props.criticalPath, props.hiddenIDs),
+    [props.trace, props.criticalPath, props.hiddenIDs]
   );
 
   const getRowStates = useCallback((): RowState[] => {
-    const { trace, childrenHiddenIDs, detailStates, detailPanelMode, prunedServices } = propsRef.current;
-    return memoizedGenerateRowStates(trace, childrenHiddenIDs, detailStates, detailPanelMode, prunedServices)
-      .rows;
+    const { trace, childrenHiddenIDs, detailStates, detailPanelMode, hiddenIDs } = propsRef.current;
+    return memoizedGenerateRowStates(trace, childrenHiddenIDs, detailStates, detailPanelMode, hiddenIDs).rows;
   }, []);
 
   const getClippingCssClasses = useCallback((): string => {
@@ -236,7 +230,7 @@ export const VirtualizedTraceViewImpl = React.memo(function VirtualizedTraceView
       propsRef.current.childrenHiddenIDs,
       propsRef.current.detailStates,
       propsRef.current.detailPanelMode,
-      propsRef.current.prunedServices
+      propsRef.current.hiddenIDs
     );
 
     const rowIndex = spanIndexToRowIndex.get(index);
@@ -387,7 +381,7 @@ export const VirtualizedTraceViewImpl = React.memo(function VirtualizedTraceView
         detailToggle,
         findMatchesIDs,
         nameColumnWidth,
-        prunedServices,
+        hiddenIDs,
         selectedSpanID,
         timelineBarsVisible,
         trace,
@@ -409,8 +403,7 @@ export const VirtualizedTraceViewImpl = React.memo(function VirtualizedTraceView
       const hasOwnError = isErrorSpan(span);
       const hasChildError = isCollapsed && spanContainsErredSpan(spans, spanIndex);
       const hasPrunedChildren =
-        prunedServices.size > 0 &&
-        span.childSpans.some(child => prunedServices.has(child.resource.serviceName));
+        hiddenIDs.size > 0 && span.childSpans.some(child => hiddenIDs.has(child.spanID));
       const criticalPathSections = criticalPathContext.sectionsFor(span, isCollapsed, hasPrunedChildren);
       // Check for direct child "server" span if the span is a "client" span.
       let rpc = null;
@@ -625,6 +618,10 @@ function VirtualizedTraceViewWrapper(
   const detailStates = useTraceTimelineStore(s => s.detailStates);
   const shouldScrollToFirstUiFindMatch = useTraceTimelineStore(s => s.shouldScrollToFirstUiFindMatch);
   const prunedServices = useTraceTimelineStore(s => s.prunedServices);
+  const hiddenIDs = useMemo(
+    () => hiddenSpanIDsForServices(ownProps.trace.spans, prunedServices),
+    [ownProps.trace.spans, prunedServices]
+  );
   const selectedSpanID = detailPanelMode === 'sidepanel' ? getSelectedSpanID(detailStates) : null;
 
   const zustandSetTrace = useTraceTimelineStore(s => s.setTrace);
@@ -707,7 +704,7 @@ function VirtualizedTraceViewWrapper(
     childrenHiddenIDs,
     detailStates,
     shouldScrollToFirstUiFindMatch,
-    prunedServices,
+    hiddenIDs,
     selectedSpanID,
     setTrace,
     childrenToggle,
