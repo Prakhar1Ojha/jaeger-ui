@@ -15,6 +15,7 @@ import {
   IClause,
   ISpanFilter,
   KEEP_NEEDS_LIFT,
+  LEAVES_NO_SPAN,
   withHiddenServices,
 } from '../../spanFilter';
 
@@ -404,12 +405,14 @@ describe('SpanFilterButton', () => {
     });
   });
 
-  it('keeps the warning and the footer outside the scrolling sections', async () => {
+  it('keeps the warning above the scrolling sections and the footer below them', async () => {
     renderButton(makeTrace(['svc-a', 'svc-b'], ['svc-a', 'svc-b']));
     await open();
     fireEvent.click(screen.getByText('Select None'));
     const alert = screen.getByRole('alert');
     expect(alert.closest('.SpanFilter--body')).toBeNull();
+    const body = screen.getByText('Service').closest('.SpanFilter--body') as HTMLElement;
+    expect(alert.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByText('Save as Default').closest('.SpanFilter--body')).toBeNull();
     expect(screen.getByText('Service').closest('.SpanFilter--body')).not.toBeNull();
   });
@@ -1478,6 +1481,36 @@ describe('SpanFilterButton', () => {
         'aria-disabled',
         'true'
       );
+    });
+
+    it('disables the eyes up front when the clause would leave no span shown', async () => {
+      // Every span carries the attribute, so hiding it leaves nothing; nothing carries the other.
+      const trace = [0, 1, 2, 3, 4].reduce(
+        (t, i) => withAttribute(t, 'k', 'v', i),
+        makeTrace(['svc-a', 'svc-b'])
+      );
+      render(<Stateful trace={trace} treeMode="lift" />);
+      await open();
+      const input = screen.getByRole('textbox', { name: 'Attribute contains' });
+      fireEvent.change(input, { target: { value: 'k:v' } });
+      const hide = screen.getByRole('button', { name: 'Hide spans with it' });
+      expect(hide).toHaveAttribute('aria-disabled', 'true');
+      expect(screen.getByRole('button', { name: 'Keep spans with it' })).toHaveAttribute(
+        'aria-disabled',
+        'false'
+      );
+      fireEvent.focus(hide);
+      await waitFor(() => expect(visibleTooltip()).toHaveTextContent(LEAVES_NO_SPAN));
+      fireEvent.click(hide);
+      fireEvent.change(input, { target: { value: 'nothing:here' } });
+      fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
+      fireEvent.click(screen.getByRole('button', { name: 'Keep spans with it' }));
+      expect(screen.getByRole('button', { name: 'Keep spans with it' })).toHaveAttribute(
+        'aria-disabled',
+        'true'
+      );
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.queryByRole('alert')).toBeNull();
     });
 
     it('explains the syntax behind the question mark', async () => {

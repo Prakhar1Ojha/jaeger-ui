@@ -44,10 +44,11 @@ SPDX-License-Identifier: Apache-2.0
   flex-shrink: 0;
 }
 
+/* The warning sits above the sections, outside the scroll, so a held edit always shows why. */
 .ServiceFilter--warning {
   color: var(--feedback-error);
   font-size: 0.85em;
-  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
 }
 
 .ServiceFilter--footer {
@@ -302,22 +303,26 @@ SPDX-License-Identifier: Apache-2.0
   opacity: 0.4;
 }
 
-/* The circled question mark of the search form's field hints. */
+/* The circled question mark of the search form's field hints, drawn on the icon at the same size. */
 .SpanFilter--help {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--text-muted);
+  border: none;
   background: none;
-  padding: 1px;
-  border-radius: 50%;
+  padding: 0;
+  font-size: 14px;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 0.75rem;
+}
+
+.SpanFilter--help svg {
+  border: 1px solid currentColor;
+  border-radius: 100px;
+  padding: 1px;
 }
 
 .SpanFilter--help:hover {
   color: var(--text-primary);
-  border-color: var(--text-primary);
 }
 
 .SpanFilter--helpText p,

@@ -11,14 +11,23 @@ import { KEEP_NEEDS_LIFT } from '../../spanFilter';
 export const TOOLTIP_TRIGGERS: Array<'hover' | 'focus'> = ['hover', 'focus'];
 
 /**
- * A control that creates a keep clause, with the tooltip that says why it is disabled in remove
- * mode. The control stays focusable while it is disabled, so that a keyboard user reaches the reason.
+ * A control that creates a keep clause, with the tooltip that says why it is disabled: the tree mode
+ * unless another reason is given. The control stays focusable while it is disabled, so that a
+ * keyboard user reaches the reason.
  */
-export function KeepControl({ allowed, children }: { allowed: boolean; children: React.ReactElement }) {
+export function KeepControl({
+  allowed,
+  reason = KEEP_NEEDS_LIFT,
+  children,
+}: {
+  allowed: boolean;
+  reason?: string;
+  children: React.ReactElement;
+}) {
   return allowed ? (
     children
   ) : (
-    <Tooltip title={KEEP_NEEDS_LIFT} trigger={TOOLTIP_TRIGGERS}>
+    <Tooltip title={reason} trigger={TOOLTIP_TRIGGERS}>
       {children}
     </Tooltip>
   );

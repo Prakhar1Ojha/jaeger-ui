@@ -284,14 +284,35 @@ export default function SpanFilterButton({
     [facets, lockedService, stage]
   );
   const [attribute, setAttribute] = useState('');
+  const attributeText = attribute.trim();
+  const withAttribute = useCallback(
+    (f: ISpanFilter, verb: Verb): ISpanFilter => ({
+      ...f,
+      clauses: [...f.clauses, { verb, criterion: { shape: 'attr', text: attributeText } }],
+    }),
+    [attributeText]
+  );
+  // The eye that would leave no span shown is disabled before the click, because an attribute that
+  // matches nothing has no edit that would make the clause valid afterwards.
+  const attributeReason = useCallback(
+    (verb: Verb): string | null => {
+      if (verb === 'keep' && !keepAllowed) return KEEP_NEEDS_LIFT;
+      if (!attributeText) return null;
+      return hidesEverySpan(trace.spans, normalizeFilter(withAttribute(editing, verb)))
+        ? LEAVES_NO_SPAN
+        : null;
+    },
+    [attributeText, editing, keepAllowed, trace.spans, withAttribute]
+  );
+  const attributeKeepReason = attributeReason('keep');
+  const attributeHideReason = attributeReason('hide');
   const addAttribute = useCallback(
     (verb: Verb) => {
-      const text = attribute.trim();
-      if (!text || (verb === 'keep' && !keepAllowed)) return;
-      stage(f => ({ ...f, clauses: [...f.clauses, { verb, criterion: { shape: 'attr', text } }] }));
+      if (!attributeText || attributeReason(verb)) return;
+      stage(f => withAttribute(f, verb));
       setAttribute('');
     },
-    [attribute, keepAllowed, stage]
+    [attributeText, attributeReason, stage, withAttribute]
   );
 
   const setTreeMode = useCallback((treeMode: TreeMode) => commitNow(f => ({ ...f, treeMode })), [commitNow]);
@@ -370,18 +391,22 @@ export default function SpanFilterButton({
   const statusRows = countRows('status', facets.values.status);
   const spanTypeRows = countRows('spanType', facets.values.spanType);
   const kindRows = countRows('kind', facets.values.kind);
-  const attributeEmpty = !attribute.trim();
-  const attributeKeep = (
-    <button
-      type="button"
-      className={`FacetList--action is-keep ${keepAllowed && !attributeEmpty ? 'is-on' : 'is-disabled'}`}
-      aria-label="Keep spans with it"
-      aria-disabled={!keepAllowed || attributeEmpty}
-      onClick={() => addAttribute('keep')}
-    >
-      <IoEye aria-hidden />
-    </button>
-  );
+  const attributeEye = (verb: Verb, reason: string | null) => {
+    const on = attributeText !== '' && !reason;
+    return (
+      <KeepControl allowed={!reason} reason={reason ?? undefined}>
+        <button
+          type="button"
+          className={`FacetList--action is-${verb} ${on ? 'is-on' : 'is-disabled'}`}
+          aria-label={verb === 'keep' ? 'Keep spans with it' : 'Hide spans with it'}
+          aria-disabled={!on}
+          onClick={() => addAttribute(verb)}
+        >
+          {verb === 'keep' ? <IoEye aria-hidden /> : <IoEyeOff aria-hidden />}
+        </button>
+      </KeepControl>
+    );
+  };
 
   const content = (
     <div
@@ -395,6 +420,11 @@ export default function SpanFilterButton({
         if (e.key === 'Escape') handleOpenChange(false);
       }}
     >
+      {warning && (
+        <div className="ServiceFilter--warning" role="alert">
+          {warning}
+        </div>
+      )}
       <div className="SpanFilter--body">
         {editing.clauses.length > 0 && (
           <section className="SpanFilter--section" aria-label="Active filters">
@@ -479,16 +509,8 @@ export default function SpanFilterButton({
               onPressEnter={() => addAttribute('keep')}
               aria-label="Attribute contains"
             />
-            <KeepControl allowed={keepAllowed}>{attributeKeep}</KeepControl>
-            <button
-              type="button"
-              className={`FacetList--action is-hide ${attributeEmpty ? 'is-disabled' : 'is-on'}`}
-              aria-label="Hide spans with it"
-              aria-disabled={attributeEmpty}
-              onClick={() => addAttribute('hide')}
-            >
-              <IoEyeOff aria-hidden />
-            </button>
+            {attributeEye('keep', attributeKeepReason)}
+            {attributeEye('hide', attributeHideReason)}
           </div>
         </Section>
         {spanTypeRows.length > 1 && facetList('spanType', 'GenAI span type', spanTypeRows)}
@@ -501,11 +523,6 @@ export default function SpanFilterButton({
           </Radio.Group>
         </Section>
       </div>
-      {warning && (
-        <div className="ServiceFilter--warning" role="alert">
-          {warning}
-        </div>
-      )}
       <div className="ServiceFilter--footer">
         <Button
           size="small"
