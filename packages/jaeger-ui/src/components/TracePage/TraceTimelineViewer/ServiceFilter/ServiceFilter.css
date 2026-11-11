@@ -179,7 +179,7 @@ SPDX-License-Identifier: Apache-2.0
 }
 
 .SpanFilter--chipVerb.is-keep {
-  color: var(--interactive-primary);
+  color: var(--feedback-success);
 }
 
 .SpanFilter--chipVerb.is-disabled,
@@ -287,8 +287,13 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--text-primary);
 }
 
-.FacetList--action.is-on {
-  color: var(--interactive-primary);
+/* Keep is green and hide is red, as on the chips; the popover's accent colour is everywhere else. */
+.FacetList--action.is-on.is-keep {
+  color: var(--feedback-success);
+}
+
+.FacetList--action.is-on.is-hide {
+  color: var(--feedback-error);
 }
 
 .FacetList--action:disabled,

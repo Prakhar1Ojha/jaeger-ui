@@ -76,7 +76,7 @@ export default function FacetList({
           const only = (
             <button
               type="button"
-              className={`FacetList--action ${isOnly ? 'is-on' : ''} ${keepAllowed ? '' : 'is-disabled'}`}
+              className={`FacetList--action is-keep ${isOnly ? 'is-on' : ''} ${keepAllowed ? '' : 'is-disabled'}`}
               aria-label={`Only ${row.label}`}
               aria-pressed={isOnly}
               aria-disabled={!keepAllowed}
@@ -104,7 +104,7 @@ export default function FacetList({
               <KeepControl allowed={keepAllowed}>{only}</KeepControl>
               <button
                 type="button"
-                className={`FacetList--action ${isHidden ? 'is-on' : ''}`}
+                className={`FacetList--action is-hide ${isHidden ? 'is-on' : ''}`}
                 aria-label={`${isHidden ? 'Show' : 'Hide'} ${row.label}`}
                 disabled={row.locked && !isHidden}
                 onClick={() => onToggleHidden(row.value)}

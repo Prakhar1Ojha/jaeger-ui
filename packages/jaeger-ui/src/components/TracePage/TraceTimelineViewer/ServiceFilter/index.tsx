@@ -374,7 +374,7 @@ export default function SpanFilterButton({
   const attributeKeep = (
     <button
       type="button"
-      className={`FacetList--action ${keepAllowed && !attributeEmpty ? '' : 'is-disabled'}`}
+      className={`FacetList--action is-keep is-on ${keepAllowed && !attributeEmpty ? '' : 'is-disabled'}`}
       aria-label="Keep spans with it"
       aria-disabled={!keepAllowed || attributeEmpty}
       onClick={() => addAttribute('keep')}
@@ -482,7 +482,7 @@ export default function SpanFilterButton({
             <KeepControl allowed={keepAllowed}>{attributeKeep}</KeepControl>
             <button
               type="button"
-              className={`FacetList--action ${attributeEmpty ? 'is-disabled' : ''}`}
+              className={`FacetList--action is-hide is-on ${attributeEmpty ? 'is-disabled' : ''}`}
               aria-label="Hide spans with it"
               aria-disabled={attributeEmpty}
               onClick={() => addAttribute('hide')}
