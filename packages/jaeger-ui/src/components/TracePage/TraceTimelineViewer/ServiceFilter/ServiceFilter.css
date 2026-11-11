@@ -312,6 +312,7 @@ SPDX-License-Identifier: Apache-2.0
   border-radius: 50%;
   color: var(--text-muted);
   cursor: pointer;
+  font-size: 0.75rem;
 }
 
 .SpanFilter--help:hover {
