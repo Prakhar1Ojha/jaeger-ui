@@ -297,19 +297,21 @@ SPDX-License-Identifier: Apache-2.0
   opacity: 0.4;
 }
 
+/* The circled question mark of the search form's field hints. */
 .SpanFilter--help {
   display: inline-flex;
   align-items: center;
-  border: none;
+  border: 1px solid var(--text-muted);
   background: none;
-  padding: 2px;
+  padding: 1px;
   border-radius: 50%;
   color: var(--text-muted);
-  cursor: help;
+  cursor: pointer;
 }
 
 .SpanFilter--help:hover {
   color: var(--text-primary);
+  border-color: var(--text-primary);
 }
 
 .SpanFilter--helpText p,
