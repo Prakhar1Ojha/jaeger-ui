@@ -35,7 +35,7 @@ export function KeepControl({
 
 type SectionProps = {
   title: string;
-  // Controls shown in the header next to the title, such as Select All.
+  // Controls shown in the header next to the title, such as Clear.
   actions?: React.ReactNode;
   // The text of the help tooltip behind the question mark next to the title.
   help?: React.ReactNode;

@@ -232,7 +232,7 @@ export default function SpanFilterButton({
   // hidden by taking it out, and hiding the last kept value turns the keep clause into a hide
   // clause on every value, so that the rows keep the state they showed. The eye keeps only that
   // value, replacing the property's clauses, and a second click on it clears the keep clause
-  // again. Select All clears both clauses and Select None hides every value.
+  // again. Clear removes both clauses.
   const toggleHidden = useCallback(
     (property: SetProperty, value: string) =>
       stage(f => {
@@ -269,19 +269,9 @@ export default function SpanFilterButton({
       }),
     [stage]
   );
-  const selectAll = useCallback(
+  const clearProperty = useCallback(
     (property: SetProperty) => stage(f => withKeptAndHidden(f, property, new Set(), new Set())),
     [stage]
-  );
-  const selectNone = useCallback(
-    (property: SetProperty) =>
-      stage(f => {
-        const values = new Set(
-          [...facets.values[property].keys()].filter(v => property !== 'service' || v !== lockedService)
-        );
-        return withKeptAndHidden(f, property, new Set(), values);
-      }),
-    [facets, lockedService, stage]
   );
   const [attribute, setAttribute] = useState('');
   const attributeText = attribute.trim();
@@ -375,8 +365,7 @@ export default function SpanFilterButton({
       keepAllowed={keepAllowed}
       onToggleHidden={value => toggleHidden(property, value)}
       onOnly={value => only(property, value)}
-      onSelectAll={() => selectAll(property)}
-      onSelectNone={() => selectNone(property)}
+      onClear={() => clearProperty(property)}
     />
   );
   const serviceRows: FacetRow[] = serviceEntries.map(({ name }) => ({

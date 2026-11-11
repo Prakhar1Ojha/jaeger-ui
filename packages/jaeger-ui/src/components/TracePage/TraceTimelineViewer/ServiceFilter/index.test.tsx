@@ -219,18 +219,13 @@ describe('SpanFilterButton', () => {
       expect(screen.queryByText('Apply')).toBeNull();
     });
 
-    it('applies Select None without the locked root service', async () => {
-      renderButton(makeTrace(['svc-a', 'svc-b', 'svc-c']));
-      await open();
-      fireEvent.click(screen.getByText('Select None'));
-      expect(onChange).toHaveBeenCalledWith(hideServices('svc-b', 'svc-c'));
-    });
-
     it('holds an edit that would hide every service and shows the warning instead of applying it', async () => {
-      renderButton(makeTrace(['svc-a', 'svc-b'], ['svc-a', 'svc-b']));
+      render(<Stateful trace={makeTrace(['svc-a', 'svc-b'], ['svc-a', 'svc-b'])} />);
       await open();
-      fireEvent.click(screen.getByText('Select None'));
-      expect(onChange).not.toHaveBeenCalled();
+      fireEvent.click(hideButtons()[0]);
+      expect(onChange).toHaveBeenCalledTimes(1);
+      fireEvent.click(hideButtons()[1]);
+      expect(onChange).toHaveBeenCalledTimes(1);
       expect(screen.getByRole('alert')).toHaveTextContent('At least one service must be visible');
       expect(screen.getByText('Save as Default').closest('button')).toBeDisabled();
     });
@@ -304,13 +299,15 @@ describe('SpanFilterButton', () => {
     });
 
     it('disables Apply until something changed and while the draft is invalid', async () => {
-      renderButton(makeTrace(['svc-a', 'svc-b'], ['svc-a', 'svc-b']), EMPTY_SPAN_FILTER, 0);
+      renderButton(makeTrace(['svc-a', 'svc-b']), { treeMode: 'lift', clauses: [] }, 0);
       await open();
       expect(screen.getByText('Apply').closest('button')).toBeDisabled();
-      fireEvent.click(screen.getByText('Select None'));
-      expect(screen.getByText('Apply').closest('button')).toBeDisabled();
       fireEvent.click(hideButtons()[0]);
-      expect(screen.getByText('Apply').closest('button')).not.toBeDisabled();
+      expect(screen.getByText('Apply').closest('button')).toBeEnabled();
+      // Hiding the other service too leaves no span, so the draft is invalid and cannot be applied.
+      fireEvent.click(hideButtons()[1]);
+      expect(screen.getByRole('alert')).toHaveTextContent('At least one service must be visible');
+      expect(screen.getByText('Apply').closest('button')).toBeDisabled();
     });
 
     it('removes a chip at once and applies the waiting list edits with it', async () => {
@@ -406,9 +403,10 @@ describe('SpanFilterButton', () => {
   });
 
   it('keeps the warning above the scrolling sections and the footer below them', async () => {
-    renderButton(makeTrace(['svc-a', 'svc-b'], ['svc-a', 'svc-b']));
+    renderButton(makeTrace(['svc-a', 'svc-b']), { treeMode: 'lift', clauses: [] }, 0);
     await open();
-    fireEvent.click(screen.getByText('Select None'));
+    fireEvent.click(hideButtons()[0]);
+    fireEvent.click(hideButtons()[1]);
     const alert = screen.getByRole('alert');
     expect(alert.closest('.SpanFilter--body')).toBeNull();
     const body = screen.getByText('Service').closest('.SpanFilter--body') as HTMLElement;
@@ -572,8 +570,9 @@ describe('SpanFilterButton', () => {
       };
       renderButton(makeTrace(['svc-a', 'svc-b'], ['svc-a', 'svc-b']), hideErrors, 0);
       await open();
-      fireEvent.click(screen.getByText('Select None'));
-      // The service chip that Select None added comes first; the status chip follows it.
+      fireEvent.click(hideButtons()[0]);
+      fireEvent.click(hideButtons()[1]);
+      // The service chip that hiding added comes first; the status chip follows it.
       fireEvent.click(screen.getAllByRole('button', { name: 'hide, switch to keep' })[1]);
       fireEvent.click(hideButtons()[0]);
       expect(onChange).not.toHaveBeenCalled();
@@ -763,18 +762,15 @@ describe('SpanFilterButton', () => {
       });
     });
 
-    it('applies nothing for a list edit that changes nothing', async () => {
-      renderButton(makeTrace(['svc-a', 'svc-b']));
+    it('offers Clear only while the list has a chip, and clears it', async () => {
+      const { unmount } = renderButton(makeTrace(['svc-a', 'svc-b']));
       await open();
-      fireEvent.click(screen.getByText('Select All'));
-      expect(onChange).not.toHaveBeenCalled();
-    });
-
-    it('leaves Apply disabled after a list edit that changes nothing above the threshold', async () => {
-      renderButton(makeTrace(['svc-a', 'svc-b']), EMPTY_SPAN_FILTER, 0);
+      expect(screen.queryByText('Clear')).toBeNull();
+      unmount();
+      renderButton(makeTrace(['svc-a', 'svc-b']), hideServices('svc-b'));
       await open();
-      fireEvent.click(screen.getByText('Select All'));
-      expect(screen.getByText('Apply').closest('button')).toBeDisabled();
+      fireEvent.click(screen.getByText('Clear'));
+      expect(onChange).toHaveBeenLastCalledWith(EMPTY_SPAN_FILTER);
     });
   });
 
@@ -1142,7 +1138,7 @@ describe('SpanFilterButton', () => {
       });
     });
 
-    it('clears the keep clause on Select All and on Select None', async () => {
+    it('clears the keep clause on Clear', async () => {
       const trace = makeTrace(['svc-a']);
       (trace.spans[0] as { kind: SpanKind }).kind = SpanKind.SERVER;
       const filter: ISpanFilter = {
@@ -1152,13 +1148,8 @@ describe('SpanFilterButton', () => {
       renderButton(trace, filter);
       await open();
       const kinds = within(screen.getByRole('region', { name: 'Span kind' }));
-      fireEvent.click(kinds.getByText('Select All'));
+      fireEvent.click(kinds.getByText('Clear'));
       expect(onChange).toHaveBeenLastCalledWith({ treeMode: 'lift', clauses: [] });
-      fireEvent.click(kinds.getByText('Select None'));
-      // Every kind hidden leaves no span, so the edit stays in the draft with the warning.
-      expect(onChange).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('alert')).toHaveTextContent('leave no span');
-      expect(screen.getByRole('button', { name: 'Remove kind: Internal, Server' })).toBeInTheDocument();
     });
 
     it('clears the hide clause when Only is clicked a second time', async () => {
@@ -1281,18 +1272,6 @@ describe('SpanFilterButton', () => {
           },
         ],
       });
-    });
-
-    it('hides every span kind on Select None when the root service is named like a kind', async () => {
-      const trace = makeTrace(['server']);
-      (trace.spans[0] as { kind: SpanKind }).kind = SpanKind.SERVER;
-      renderButton(trace);
-      await open();
-      fireEvent.click(within(screen.getByRole('region', { name: 'Span kind' })).getByText('Select None'));
-      // Every kind hidden hides the root too, so the edit is held, with the chip naming both kinds.
-      expect(onChange).not.toHaveBeenCalled();
-      expect(screen.getByRole('alert')).toHaveTextContent('leave no span');
-      expect(screen.getByRole('button', { name: 'Remove kind: Internal, Server' })).toBeInTheDocument();
     });
 
     it('folds a section and opens it again', async () => {

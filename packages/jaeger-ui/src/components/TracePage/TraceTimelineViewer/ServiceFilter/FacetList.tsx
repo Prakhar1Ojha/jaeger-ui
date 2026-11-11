@@ -35,14 +35,14 @@ type FacetListProps = {
   keepAllowed: boolean;
   onToggleHidden: (value: string) => void;
   onOnly: (value: string) => void;
-  onSelectAll: () => void;
-  onSelectNone: () => void;
+  onClear: () => void;
 };
 
 /**
  * A list of the values of one span property, each with a bar proportional to its span count and
  * the two verb actions: the crossed-out eye hides a shown value and shows a hidden one, and the
- * eye keeps only that value. A value that the clauses hide is dimmed.
+ * eye keeps only that value. A value that the clauses hide is dimmed. The Clear action in the
+ * heading removes the property's chips, so it is shown only while there is one.
  */
 export default function FacetList({
   title,
@@ -52,22 +52,18 @@ export default function FacetList({
   keepAllowed,
   onToggleHidden,
   onOnly,
-  onSelectAll,
-  onSelectNone,
+  onClear,
 }: FacetListProps) {
   const maxCount = rows.reduce((m, r) => Math.max(m, r.count), 0);
   return (
     <Section
       title={title}
       actions={
-        <>
-          <Button size="small" type="link" onClick={onSelectAll}>
-            Select All
+        (hidden.size > 0 || kept.size > 0) && (
+          <Button size="small" type="link" onClick={onClear}>
+            Clear
           </Button>
-          <Button size="small" type="link" onClick={onSelectNone}>
-            Select None
-          </Button>
-        </>
+        )
       }
     >
       <div className="FacetList" role="group" aria-label={`${title} values`}>
